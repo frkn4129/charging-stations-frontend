@@ -49,6 +49,41 @@ const mapStyles = {
   dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
 };
 
+// Varış zamanı hesaplama fonksiyonu (dosyanın üst kısmına ekleyin)
+const calculateArrivalTime = (distance) => {
+  // Mesafeye göre ortalama hız belirleme (km/s)
+  let averageSpeed;
+  if (distance < 5) {
+    averageSpeed = 30; // Şehir içi
+  } else if (distance < 20) {
+    averageSpeed = 45; // Şehir çevresi
+  } else {
+    averageSpeed = 80; // Şehiriçi otoyol
+  }
+
+  // Saat faktörüne göre trafik düzeltmesi
+  const hour = new Date().getHours();
+  let trafficMultiplier = 1;
+  
+  // Yoğun trafik saatleri
+  if ((hour >= 8 && hour <= 10) || (hour >= 17 && hour <= 19)) {
+    trafficMultiplier = 1.5; // Trafik yoğun
+  } else if ((hour >= 7 && hour < 8) || (hour > 10 && hour <= 16) || (hour > 19 && hour <= 21)) {
+    trafficMultiplier = 1.2; // Normal trafik
+  }
+
+  // Tahmini süre hesaplama (saat cinsinden)
+  const estimatedHours = (distance / averageSpeed) * trafficMultiplier;
+  
+  // Varış zamanı hesaplama
+  const arrivalTime = new Date(Date.now() + estimatedHours * 60 * 60 * 1000);
+  
+  return {
+    time: arrivalTime.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+    duration: Math.round(estimatedHours * 60) // Dakika cinsinden süre
+  };
+};
+
 function LocationMarker({ onLocationFound }) {
   const map = useMap();
   const [locationError, setLocationError] = useState(false);
@@ -278,6 +313,20 @@ const Map = ({ stations }) => {
     batteryCapacity: 60,
     currentCharge: 80,
   });
+
+  // Panel yükseklik durumları
+  const PANEL_STATES = {
+    CLOSED: '-100vh',  // Tamamen kapalı
+    HALF: '40vh',
+    FULL: '80vh'
+  };
+
+  // Panel başlangıç durumu
+  const [panelHeight, setPanelHeight] = useState(PANEL_STATES.HALF);
+  const [isDragging, setIsDragging] = useState(false);
+  const [startY, setStartY] = useState(0);
+  const [currentY, setCurrentY] = useState(0);
+  const panelRef = useRef(null);
 
   // Harita stil URL'sini tema moduna göre seç
   const mapStyle = theme.palette.mode === 'dark' ? mapStyles.dark : mapStyles.light;
@@ -567,13 +616,8 @@ const Map = ({ stations }) => {
     const remainingCharge = calculateRemainingCharge(consumption);
     const isLowBattery = remainingCharge < 20;
 
-    // Varış zamanı hesaplama (ortalama 60 km/s hız varsayımı)
-    const estimatedDuration = (distance / 60) * 60; // dakika cinsinden
-    const arrivalTime = new Date(Date.now() + estimatedDuration * 60 * 1000);
-    const formattedArrivalTime = arrivalTime.toLocaleTimeString('tr-TR', { 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    });
+    // Varış zamanı hesaplama
+    const arrival = calculateArrivalTime(distance);
 
     return (
       <Box
@@ -631,7 +675,10 @@ const Map = ({ stations }) => {
               <Typography variant="caption" color="text.secondary">Varış</Typography>
             </Box>
             <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.grey[600] }}>
-              {formattedArrivalTime}
+              {arrival.time}
+              <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', fontSize: '0.7rem' }}>
+                {arrival.duration} dk
+              </Typography>
             </Typography>
           </Box>
 
@@ -704,6 +751,93 @@ const Map = ({ stations }) => {
     );
   };
 
+  // Mouse/Touch olayları için yeni fonksiyonlar
+  const handleStart = (e) => {
+    setIsDragging(true);
+    const clientY = e.type === 'mousedown' ? e.clientY : e.touches[0].clientY;
+    setStartY(clientY);
+    setCurrentY(clientY);
+  };
+
+  const handleMove = (e) => {
+    if (!isDragging) return;
+    e.preventDefault();
+    
+    const clientY = e.type === 'mousemove' ? e.clientY : e.touches[0].clientY;
+    setCurrentY(clientY);
+    
+    const deltaY = clientY - startY;
+    const screenHeight = window.innerHeight;
+    const currentHeight = screenHeight * (parseInt(panelHeight) / 100);
+    
+    let newHeight;
+    if (deltaY > 0) {
+      // Aşağı çekme
+      newHeight = Math.max(0, screenHeight - currentHeight - deltaY);
+    } else {
+      // Yukarı çekme
+      newHeight = Math.min(screenHeight * 0.8, screenHeight - currentHeight - deltaY);
+    }
+    
+    const newHeightVh = (newHeight / screenHeight) * 100;
+    setPanelHeight(`${newHeightVh}vh`);
+  };
+
+  const handleEnd = () => {
+    if (!isDragging) return;
+    
+    setIsDragging(false);
+    const deltaY = currentY - startY;
+    const threshold = window.innerHeight * 0.2; // 20% eşik değeri
+    
+    if (deltaY > threshold) {
+      setPanelHeight(PANEL_STATES.CLOSED);
+    } else if (deltaY < -threshold) {
+      setPanelHeight(PANEL_STATES.FULL);
+    } else {
+      setPanelHeight(PANEL_STATES.HALF);
+    }
+  };
+
+  // Panel stillerini güncelle
+  const panelStyles = {
+    position: 'fixed',
+    bottom: panelHeight === PANEL_STATES.CLOSED ? '-100vh' : 0,
+    left: 0,
+    right: 0,
+    height: panelHeight === PANEL_STATES.CLOSED ? '40vh' : panelHeight,
+    borderRadius: '16px 16px 0 0',
+    zIndex: 1000,
+    bgcolor: 'background.paper',
+    overflow: 'hidden',
+    transition: isDragging ? 'none' : 'all 0.3s ease-in-out',
+    pb: 'env(safe-area-inset-bottom)',
+    display: 'flex',
+    flexDirection: 'column',
+    touchAction: 'none',
+    boxShadow: '0px -2px 10px rgba(0,0,0,0.1)',
+    userSelect: 'none', // Metin seçimini engelle
+  };
+
+  // Panel kapalıyken görünecek handle
+  const handleStyles = {
+    position: 'fixed',
+    bottom: panelHeight === PANEL_STATES.CLOSED ? 0 : 'auto',
+    left: 0,
+    right: 0,
+    height: '24px',
+    backgroundColor: theme.palette.mode === 'dark' ? 'rgba(24,28,33,0.8)' : 'rgba(255,255,255,0.9)',
+    borderRadius: '16px 16px 0 0',
+    zIndex: 999,
+    display: panelHeight === PANEL_STATES.CLOSED ? 'flex' : 'none',
+    justifyContent: 'center',
+    alignItems: 'center',
+    cursor: 'grab',
+    boxShadow: '0px -2px 10px rgba(0,0,0,0.1)',
+    backdropFilter: 'blur(8px)',
+    border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)'}`,
+  };
+
   return (
     <Box sx={{ 
       height: '100vh', 
@@ -752,52 +886,54 @@ const Map = ({ stations }) => {
         ))}
       </MapContainer>
 
-      {/* Konumuma Git butonu */}
-      <Fab
-        color="primary"
-        size="small"
-        sx={{
-          position: 'fixed',
-          bottom: isPanelOpen ? '48vh' : '80px',
-          right: 16,
-          zIndex: 1001,
-          transition: 'bottom 0.3s ease-in-out'
-        }}
-        onClick={goToMyLocation}
-      >
-        <MyLocationIcon />
-      </Fab>
+      {/* Sağ üst butonlar */}
+      <Box sx={{ 
+        position: 'fixed', 
+        top: 16, 
+        right: 16, 
+        zIndex: 1001,
+        display: 'flex',
+        gap: 1
+      }}>
+        {/* Konumuma Git butonu */}
+        <Fab
+          color="primary"
+          size="small"
+          sx={{
+            position: 'fixed',
+            top: 144,
+            right: 16,
+            zIndex: 1001,
+          }}
+          onClick={goToMyLocation}
+        >
+          <MyLocationIcon />
+        </Fab>
 
-      {/* Açma/Kapama butonu */}
-      <Fab
-        color="primary"
-        size="small"
-        sx={{
-          position: 'fixed',
-          bottom: isPanelOpen ? '40vh' : 16,
-          right: 16,
-          zIndex: 1001,
-          transition: 'bottom 0.3s ease-in-out'
-        }}
-        onClick={() => setIsPanelOpen(!isPanelOpen)}
-      >
-        {isPanelOpen ? <KeyboardArrowDownIcon /> : <KeyboardArrowUpIcon />}
-      </Fab>
+        {/* Filtre Butonu */}
+        <Fab
+          color="primary"
+          size="small"
+          sx={{
+            position: 'fixed',
+            top: 80,
+            right: 16,
+            zIndex: 1001,
+          }}
+          onClick={() => setShowFilters(!showFilters)}
+        >
+          <FilterAltIcon />
+        </Fab>
 
-      {/* Filtre Butonu */}
-      <Fab
-        color="primary"
-        size="small"
-        sx={{
-          position: 'fixed',
-          top: 80,
-          right: 16,
-          zIndex: 1001,
-        }}
-        onClick={() => setShowFilters(!showFilters)}
-      >
-        <FilterAltIcon />
-      </Fab>
+        {/* Ayarlar Butonu */}
+        <Fab
+          color="primary"
+          size="small"
+          onClick={() => setShowSettings(true)}
+        >
+          <SettingsIcon />
+        </Fab>
+      </Box>
 
       {/* Filtre Paneli */}
       <Paper
@@ -1015,209 +1151,371 @@ const Map = ({ stations }) => {
         </DialogActions>
       </Dialog>
 
-      {/* En yakın istasyonlar paneli eklendi */}
-      <Paper
-        elevation={3}
-        sx={{
-          position: 'fixed',
-          bottom: isPanelOpen ? 0 : '-40vh',
-          left: 0,
-          right: 0,
-          height: '40vh',
-          borderRadius: '16px 16px 0 0',
-          zIndex: 1000,
-          bgcolor: 'background.paper',
-          overflow: 'hidden',
-          transition: 'bottom 0.3s ease-in-out',
-          pb: 'env(safe-area-inset-bottom)',
-          display: 'flex',
-          flexDirection: 'column'
-        }}
+      {/* Panel açma handle'ı */}
+      <Box
+        sx={handleStyles}
+        onTouchStart={handleStart}
+        onTouchMove={handleMove}
+        onTouchEnd={handleEnd}
+        onMouseDown={handleStart}
+        onMouseMove={handleMove}
+        onMouseUp={handleEnd}
+        onMouseLeave={handleEnd}
       >
-        {/* Kaydırma göstergesi */}
         <Box
           sx={{
             width: '40px',
             height: '4px',
-            backgroundColor: 'rgba(0,0,0,0.2)',
+            backgroundColor: theme.palette.mode === 'dark' 
+              ? 'rgba(255,255,255,0.2)' 
+              : 'rgba(0,0,0,0.2)',
+            borderRadius: '2px',
+          }}
+        />
+      </Box>
+
+      {/* Panel */}
+      <Paper
+        ref={panelRef}
+        elevation={3}
+        sx={panelStyles}
+        onTouchStart={handleStart}
+        onTouchMove={handleMove}
+        onTouchEnd={handleEnd}
+        onMouseDown={handleStart}
+        onMouseMove={handleMove}
+        onMouseUp={handleEnd}
+        onMouseLeave={handleEnd}
+      >
+        {/* Sürükleme göstergesi */}
+        <Box
+          sx={{
+            width: '40px',
+            height: '4px',
+            backgroundColor: theme.palette.mode === 'dark' 
+              ? 'rgba(255,255,255,0.2)' 
+              : 'rgba(0,0,0,0.2)',
             borderRadius: '2px',
             margin: '8px auto',
+            cursor: 'grab',
+            '&:active': {
+              cursor: 'grabbing'
+            }
           }}
         />
 
-        <Box sx={{ 
-          p: 2, 
-          flex: 1,
-          overflowY: 'auto',
-          WebkitOverflowScrolling: 'touch'
-        }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h6">
-              En Yakın {filteredNearbyStations.length} İstasyon
-            </Typography>
-            <Box sx={{ textAlign: 'right' }}>
-              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', display: 'block' }}>
-                Ort. tüketim: {vehicleSettings.consumption} kWh/100km
+        {/* Sabit başlık */}
+        <Box
+          sx={{
+            position: 'sticky',
+            top: 0,
+            bgcolor: theme.palette.mode === 'dark' ? 'rgba(24,28,33,0.95)' : 'rgba(255,255,255,0.95)',
+            backdropFilter: 'blur(12px)',
+            borderBottom: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)'}`,
+            px: 2,
+            pt: 0.5,
+            pb: 0.5,
+            zIndex: 1,
+            boxShadow: theme.palette.mode === 'dark' 
+              ? '0 4px 12px rgba(0,0,0,0.3)'
+              : '0 4px 12px rgba(0,0,0,0.05)',
+          }}
+        >
+          {/* Başlık */}
+          <Typography 
+            variant="h6" 
+            sx={{ 
+              textAlign: 'center',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              letterSpacing: '0.5px',
+              mb: 0.25,
+              background: theme.palette.mode === 'dark'
+                ? 'linear-gradient(45deg, #90caf9, #64b5f6)'
+                : 'linear-gradient(45deg, #1976d2, #2196f3)',
+              backgroundClip: 'text',
+              WebkitBackgroundClip: 'text',
+              color: 'transparent',
+            }}
+          >
+            En Yakın {filteredNearbyStations.length} İstasyon
+          </Typography>
+
+          {/* Bilgi Satırları */}
+          <Box 
+            sx={{ 
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              gap: 3,
+              mt: 0.25,
+            }}
+          >
+            {/* Tüketim Bilgisi */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <ElectricBoltIcon sx={{ fontSize: '0.8rem', color: theme.palette.info.main }} />
+              <Typography variant="caption" sx={{ fontSize: '0.6rem', color: 'text.secondary' }}>
+                {vehicleSettings.consumption} kWh/100km
               </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', display: 'block' }}>
-                1 kWh = {vehicleSettings.pricePerKWh} TL
+            </Box>
+
+            {/* Fiyat Bilgisi */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <BoltIcon sx={{ fontSize: '0.8rem', color: theme.palette.warning.main }} />
+              <Typography variant="caption" sx={{ fontSize: '0.6rem', color: 'text.secondary' }}>
+                {vehicleSettings.pricePerKWh} TL/kWh
               </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                Batarya: {vehicleSettings.currentCharge}% ({((vehicleSettings.batteryCapacity * vehicleSettings.currentCharge) / 100).toFixed(1)} kWh)
+            </Box>
+
+            {/* Batarya Bilgisi */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <BatteryChargingFullIcon 
+                sx={{ 
+                  fontSize: '0.8rem',
+                  color: vehicleSettings.currentCharge > 20 
+                    ? theme.palette.success.main 
+                    : theme.palette.error.main 
+                }} 
+              />
+              <Typography 
+                variant="caption" 
+                sx={{ 
+                  fontSize: '0.6rem',
+                  color: vehicleSettings.currentCharge > 20 
+                    ? theme.palette.success.main 
+                    : theme.palette.error.main,
+                  fontWeight: 500
+                }}
+              >
+                {vehicleSettings.currentCharge}%
+                <Typography 
+                  component="span" 
+                  variant="caption" 
+                  sx={{ 
+                    fontSize: '0.55rem', 
+                    color: 'text.secondary',
+                    ml: 0.5 
+                  }}
+                >
+                  ({((vehicleSettings.batteryCapacity * vehicleSettings.currentCharge) / 100).toFixed(1)} kWh)
+                </Typography>
               </Typography>
             </Box>
           </Box>
+        </Box>
 
-          {filteredNearbyStations.map(station => {
-            // Mesafe ve enerji hesaplamaları
-            const distance = calculateDistance(
-              userLocation.lat,
-              userLocation.lng,
-              station.latitude,
-              station.longitude
-            );
-            const consumption = calculateEnergyConsumption(distance);
-            const cost = calculateEnergyCost(consumption);
-            const remainingCharge = calculateRemainingCharge(consumption);
-            const isLowBattery = remainingCharge < 20;
+        {/* Kaydırılabilir içerik */}
+        <Box
+          sx={{
+            flex: 1,
+            overflowY: 'auto',
+            px: 2,
+            py: 1,
+            WebkitOverflowScrolling: 'touch',
+            '&::-webkit-scrollbar': { width: '8px' },
+            '&::-webkit-scrollbar-track': { background: 'transparent' },
+            '&::-webkit-scrollbar-thumb': {
+              background: theme.palette.mode === 'dark' 
+                ? 'rgba(255,255,255,0.2)' 
+                : 'rgba(0,0,0,0.2)',
+              borderRadius: '4px',
+            }
+          }}
+        >
+          {/* İstasyon kartları */}
+          {filteredNearbyStations.map(station => (
+            <Box
+              key={station.id}
+              sx={{
+                p: 1.5,
+                mb: 1,
+                borderRadius: 2,
+                bgcolor: theme.palette.mode === 'dark' ? 'rgba(24,28,33,0.8)' : 'rgba(255,255,255,0.9)',
+                backdropFilter: 'blur(8px)',
+                border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)'}`,
+                boxShadow: '0 2px 12px rgba(0,0,0,0.1)',
+                cursor: 'pointer',
+                transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                '&:hover': {
+                  transform: 'translateY(-2px)',
+                  boxShadow: '0 4px 15px rgba(0,0,0,0.15)'
+                }
+              }}
+              onClick={(e) => handleOpenDetails(station, e)}
+            >
+              {/* İstasyon Başlığı */}
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1, alignItems: 'center' }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600, fontSize: '0.9rem' }}>
+                  {station.name}
+                </Typography>
+                <StationStatusChip station={station} />
+              </Box>
 
-            // Varış zamanı hesaplama (ortalama 60 km/s hız varsayımı)
-            const estimatedDuration = (distance / 60) * 60; // dakika cinsinden
-            const arrivalTime = new Date(Date.now() + estimatedDuration * 60 * 1000);
-            const formattedArrivalTime = arrivalTime.toLocaleTimeString('tr-TR', { 
-              hour: '2-digit', 
-              minute: '2-digit' 
-            });
-
-            return (
-              <Box
-                key={station.id}
-                sx={{
-                  p: 1.5,
-                  mb: 1,
-                  borderRadius: 2,
-                  bgcolor: theme.palette.mode === 'dark' ? 'rgba(24,28,33,0.8)' : 'rgba(255,255,255,0.9)',
-                  backdropFilter: 'blur(8px)',
-                  border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)'}`,
-                  boxShadow: '0 2px 12px rgba(0,0,0,0.1)',
-                  cursor: 'pointer',
-                  transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-                  '&:hover': {
-                    transform: 'translateY(-2px)',
-                    boxShadow: '0 4px 15px rgba(0,0,0,0.15)'
-                  }
-                }}
-                onClick={(e) => handleOpenDetails(station, e)}
-              >
-                {/* İstasyon Başlığı */}
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1, alignItems: 'center' }}>
-                  <Typography variant="subtitle1" sx={{ fontWeight: 600, fontSize: '0.9rem' }}>
-                    {station.name}
+              {/* İstatistikler */}
+              <Box sx={{ 
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr 1fr 1fr',
+                gap: 1,
+                p: 1,
+                my: 1,
+                borderRadius: 1,
+                bgcolor: theme.palette.mode === 'dark' ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)',
+                border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'}`,
+              }}>
+                {/* Mesafe */}
+                <Box sx={{ textAlign: 'center' }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
+                    <DirectionsIcon sx={{ fontSize: '1rem', color: theme.palette.primary.main, mr: 0.5 }} />
+                    <Typography variant="caption" color="text.secondary">Mesafe</Typography>
+                  </Box>
+                  <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.primary.main }}>
+                    {calculateDistance(
+                      userLocation.lat,
+                      userLocation.lng,
+                      station.latitude,
+                      station.longitude
+                    ).toFixed(1)} km
                   </Typography>
-                  <StationStatusChip station={station} />
                 </Box>
 
-                {/* İstatistikler */}
-                <Box sx={{ 
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 1fr 1fr 1fr',
-                  gap: 1,
-                  p: 1,
-                  my: 1,
-                  borderRadius: 1,
-                  bgcolor: theme.palette.mode === 'dark' ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)',
-                  border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'}`,
-                }}>
-                  {/* Mesafe */}
-                  <Box sx={{ textAlign: 'center' }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
-                      <DirectionsIcon sx={{ fontSize: '1rem', color: theme.palette.primary.main, mr: 0.5 }} />
-                      <Typography variant="caption" color="text.secondary">Mesafe</Typography>
-                    </Box>
-                    <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.primary.main }}>
-                      {distance.toFixed(1)} km
-                    </Typography>
+                {/* Varış Zamanı (Yeni) */}
+                <Box sx={{ textAlign: 'center', borderLeft: 1, borderColor: 'divider' }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
+                    <AccessTimeIcon sx={{ fontSize: '1rem', color: theme.palette.grey[500], mr: 0.5 }} />
+                    <Typography variant="caption" color="text.secondary">Varış</Typography>
                   </Box>
-
-                  {/* Varış Zamanı (Yeni) */}
-                  <Box sx={{ textAlign: 'center', borderLeft: 1, borderColor: 'divider' }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
-                      <AccessTimeIcon sx={{ fontSize: '1rem', color: theme.palette.grey[500], mr: 0.5 }} />
-                      <Typography variant="caption" color="text.secondary">Varış</Typography>
-                    </Box>
-                    <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.grey[600] }}>
-                      {formattedArrivalTime}
+                  <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.grey[600] }}>
+                    {calculateArrivalTime(
+                      calculateDistance(
+                        userLocation.lat,
+                        userLocation.lng,
+                        station.latitude,
+                        station.longitude
+                      )
+                    ).time}
+                    <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', fontSize: '0.7rem' }}>
+                      {calculateArrivalTime(
+                        calculateDistance(
+                          userLocation.lat,
+                          userLocation.lng,
+                          station.latitude,
+                          station.longitude
+                        )
+                      ).duration} dk
                     </Typography>
-                  </Box>
-
-                  {/* Tüketim */}
-                  <Box sx={{ textAlign: 'center', borderLeft: 1, borderRight: 1, borderColor: 'divider' }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
-                      <ElectricBoltIcon sx={{ fontSize: '1rem', color: theme.palette.info.main, mr: 0.5 }} />
-                      <Typography variant="caption" color="text.secondary">Tüketim</Typography>
-                    </Box>
-                    <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.info.main }}>
-                      {consumption.toFixed(1)} kWh
-                      <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', fontSize: '0.7rem' }}>
-                        ≈ {cost.toFixed(0)} TL
-                      </Typography>
-                    </Typography>
-                  </Box>
-
-                  {/* Varış Şarjı */}
-                  <Box sx={{ textAlign: 'center' }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
-                      <BatteryChargingFullIcon sx={{ 
-                        fontSize: '1rem', 
-                        color: isLowBattery ? theme.palette.error.main : theme.palette.success.main,
-                        mr: 0.5 
-                      }} />
-                      <Typography variant="caption" color="text.secondary">Varış Şarjı</Typography>
-                    </Box>
-                    <Typography variant="body2" sx={{ 
-                      fontWeight: 600,
-                      color: isLowBattery ? theme.palette.error.main : theme.palette.success.main
-                    }}>
-                      {Math.max(remainingCharge, 0).toFixed(1)}%
-                    </Typography>
-                  </Box>
+                  </Typography>
                 </Box>
 
-                {/* Alt Kısım - Butonlar */}
-                <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
-                  <Button
-                    fullWidth
-                    variant="contained"
-                    size="small"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      showRoute(station);
-                    }}
-                    startIcon={<DirectionsIcon sx={{ fontSize: '1rem' }} />}
-                    sx={{ py: 0.5, fontSize: '0.8rem' }}
-                  >
-                    Rota
-                  </Button>
-                  <IconButton
-                    size="small"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openInGoogleMaps(station);
-                    }}
-                    sx={{ 
-                      color: '#4285F4',
-                      bgcolor: theme.palette.mode === 'dark' ? 'rgba(66,133,244,0.1)' : 'rgba(66,133,244,0.05)',
-                      '&:hover': {
-                        bgcolor: theme.palette.mode === 'dark' ? 'rgba(66,133,244,0.2)' : 'rgba(66,133,244,0.1)',
-                      }
-                    }}
-                  >
-                    <GoogleIcon sx={{ fontSize: '1.2rem' }} />
-                  </IconButton>
+                {/* Tüketim */}
+                <Box sx={{ textAlign: 'center', borderLeft: 1, borderRight: 1, borderColor: 'divider' }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
+                    <ElectricBoltIcon sx={{ fontSize: '1rem', color: theme.palette.info.main, mr: 0.5 }} />
+                    <Typography variant="caption" color="text.secondary">Tüketim</Typography>
+                  </Box>
+                  <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.info.main }}>
+                    {calculateEnergyConsumption(
+                      calculateDistance(
+                        userLocation.lat,
+                        userLocation.lng,
+                        station.latitude,
+                        station.longitude
+                      )
+                    ).toFixed(1)} kWh
+                    <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', fontSize: '0.7rem' }}>
+                      ≈ {calculateEnergyCost(
+                        calculateEnergyConsumption(
+                          calculateDistance(
+                            userLocation.lat,
+                            userLocation.lng,
+                            station.latitude,
+                            station.longitude
+                          )
+                        )
+                      ).toFixed(0)} TL
+                    </Typography>
+                  </Typography>
+                </Box>
+
+                {/* Varış Şarjı */}
+                <Box sx={{ textAlign: 'center' }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
+                    <BatteryChargingFullIcon sx={{ 
+                      fontSize: '1rem', 
+                      color: calculateRemainingCharge(
+                        calculateEnergyConsumption(
+                          calculateDistance(
+                            userLocation.lat,
+                            userLocation.lng,
+                            station.latitude,
+                            station.longitude
+                          )
+                        )
+                      ) < 20 ? theme.palette.error.main : theme.palette.success.main,
+                      mr: 0.5 
+                    }} />
+                    <Typography variant="caption" color="text.secondary">Varış Şarjı</Typography>
+                  </Box>
+                  <Typography variant="body2" sx={{ 
+                    fontWeight: 600,
+                    color: calculateRemainingCharge(
+                      calculateEnergyConsumption(
+                        calculateDistance(
+                          userLocation.lat,
+                          userLocation.lng,
+                          station.latitude,
+                          station.longitude
+                        )
+                      )
+                    ) < 20 ? theme.palette.error.main : theme.palette.success.main
+                  }}>
+                    {Math.max(calculateRemainingCharge(
+                      calculateEnergyConsumption(
+                        calculateDistance(
+                          userLocation.lat,
+                          userLocation.lng,
+                          station.latitude,
+                          station.longitude
+                        )
+                      )
+                    ), 0).toFixed(1)}%
+                  </Typography>
                 </Box>
               </Box>
-            );
-          })}
+
+              {/* Alt Kısım - Butonlar */}
+              <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+                <Button
+                  fullWidth
+                  variant="contained"
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    showRoute(station);
+                  }}
+                  startIcon={<DirectionsIcon sx={{ fontSize: '1rem' }} />}
+                  sx={{ py: 0.5, fontSize: '0.8rem' }}
+                >
+                  Rota
+                </Button>
+                <IconButton
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openInGoogleMaps(station);
+                  }}
+                  sx={{ 
+                    color: '#4285F4',
+                    bgcolor: theme.palette.mode === 'dark' ? 'rgba(66,133,244,0.1)' : 'rgba(66,133,244,0.05)',
+                    '&:hover': {
+                      bgcolor: theme.palette.mode === 'dark' ? 'rgba(66,133,244,0.2)' : 'rgba(66,133,244,0.1)',
+                    }
+                  }}
+                >
+                  <GoogleIcon sx={{ fontSize: '1.2rem' }} />
+                </IconButton>
+              </Box>
+            </Box>
+          ))}
         </Box>
       </Paper>
     </Box>
