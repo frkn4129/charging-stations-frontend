@@ -17,6 +17,8 @@ import ElectricBoltIcon from '@mui/icons-material/ElectricBolt';
 import FlashOnIcon from '@mui/icons-material/FlashOn';
 import Battery5BarIcon from '@mui/icons-material/Battery5Bar';
 import SettingsIcon from '@mui/icons-material/Settings';
+import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import GoogleIcon from '@mui/icons-material/Google';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -254,165 +256,6 @@ const StationStatusChip = ({ station }) => {
   );
 };
 
-const StationDetails = ({ 
-  station, 
-  userLocation, 
-  onRoute, 
-  onNavigate,
-  calculateEnergyConsumption,
-  calculateEnergyCost
-}) => {
-  return (
-    <Box sx={{ p: 2, minWidth: 250 }}>
-      <Typography variant="h6" gutterBottom>
-        {station.name}
-      </Typography>
-      <Typography variant="body2" gutterBottom color="text.secondary">
-        {station.brand}
-      </Typography>
-      
-      <Box sx={{ mb: 2 }}>
-        <StationStatusChip station={station} />
-      </Box>
-
-      <Box sx={{ mb: 2 }}>
-        <Typography variant="subtitle2" gutterBottom>
-          DC Hızlı Şarj Durumu:
-        </Typography>
-        
-        {/* DC Şarj Noktaları */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-          <Typography variant="body2" color="text.secondary">
-            Toplam DC Port:
-          </Typography>
-          <Typography variant="body2" fontWeight="bold">
-            {station.connector_count}
-          </Typography>
-        </Box>
-
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-          <Typography variant="body2" color="text.secondary">
-            Müsait DC Port:
-          </Typography>
-          <Typography variant="body2" fontWeight="bold" color="success.main">
-            {station.available_dc}
-          </Typography>
-        </Box>
-
-        {/* Kullanımda */}
-        {station.unavailable_count > 0 && (
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-            <Typography variant="body2" color="text.secondary">
-              Kullanımda:
-            </Typography>
-            <Typography variant="body2" fontWeight="bold" color="warning.main">
-              {station.unavailable_count}
-            </Typography>
-          </Box>
-        )}
-
-        {/* Arızalı */}
-        {station.error_count > 0 && (
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-            <Typography variant="body2" color="text.secondary">
-              Arızalı:
-            </Typography>
-            <Typography variant="body2" fontWeight="bold" color="error.main">
-              {station.error_count}
-            </Typography>
-          </Box>
-        )}
-
-        {/* AC Şarj Noktaları */}
-        {station.available_ac > 0 && (
-          <Box sx={{ mt: 1 }}>
-            <Typography variant="subtitle2" gutterBottom>
-              AC Normal Şarj:
-            </Typography>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-              <Typography variant="body2" color="text.secondary">
-                Müsait AC Port:
-              </Typography>
-              <Typography variant="body2" fontWeight="bold">
-                {station.available_ac}
-              </Typography>
-            </Box>
-          </Box>
-        )}
-      </Box>
-
-      {userLocation && (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mb: 2 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-            <Typography variant="body2" color="text.secondary">
-              Mesafe:
-            </Typography>
-            <Typography variant="body2" fontWeight="bold">
-              {calculateDistance(
-                userLocation.lat,
-                userLocation.lng,
-                station.latitude,
-                station.longitude
-              ).toFixed(1)} km
-            </Typography>
-          </Box>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-            <Typography variant="body2" color="text.secondary">
-              Tahmini Tüketim:
-            </Typography>
-            <Typography variant="body2" fontWeight="bold" color="info.main">
-              {calculateEnergyConsumption(
-                calculateDistance(
-                  userLocation.lat,
-                  userLocation.lng,
-                  station.latitude,
-                  station.longitude
-                )
-              ).toFixed(1)} kWh
-              {' ≈ '}
-              {calculateEnergyCost(
-                calculateEnergyConsumption(
-                  calculateDistance(
-                    userLocation.lat,
-                    userLocation.lng,
-                    station.latitude,
-                    station.longitude
-                  )
-                )
-              ).toFixed(0)} TL
-            </Typography>
-          </Box>
-        </Box>
-      )}
-
-      <Box sx={{ display: 'flex', gap: 1 }}>
-        <Button
-          fullWidth
-          variant="contained"
-          startIcon={<DirectionsIcon />}
-          onClick={onRoute}
-          size="small"
-        >
-          Rota Çiz
-        </Button>
-        <IconButton
-          size="small"
-          onClick={onNavigate}
-          sx={{ 
-            bgcolor: 'primary.main',
-            color: 'white',
-            '&:hover': {
-              bgcolor: 'primary.dark'
-            }
-          }}
-        >
-          <NearMeIcon />
-        </IconButton>
-      </Box>
-    </Box>
-  );
-};
-
 const Map = ({ stations }) => {
   const theme = useTheme();
   const [userLocation, setUserLocation] = useState(null);
@@ -584,6 +427,283 @@ const Map = ({ stations }) => {
     return (remainingKWh / vehicleSettings.batteryCapacity) * 100;
   }, [vehicleSettings.batteryCapacity, vehicleSettings.currentCharge]);
 
+  // İstasyon marker ikonunu oluştur
+  const getStationIcon = useCallback((station) => {
+    // İstasyon durumuna göre stil belirleme
+    let mainColor, secondaryColor, statusIcon;
+    
+    if (station.error_count === station.connector_count) {
+      mainColor = '#f44336';  // Kırmızı - arızalı
+      secondaryColor = '#ffcdd2';
+      statusIcon = '⚠️';
+    } else if (station.available_dc === 0 && station.available_ac === 0) {
+      mainColor = '#ff9800';  // Turuncu - meşgul
+      secondaryColor = '#ffe0b2';
+      statusIcon = '⌛';
+    } else {
+      mainColor = '#0D47A1';  // Daha koyu mavi - müsait (#1976d2 yerine #0D47A1)
+      secondaryColor = '#64B5F6';
+      statusIcon = '⚡';
+    }
+
+    const dcCount = station.available_dc;
+    const acCount = station.available_ac;
+    const totalAvailable = dcCount + acCount;
+
+    // DC/AC rozet metni
+    const chargerTypeText = dcCount > 0 && acCount > 0 ? 'DC/AC' : dcCount > 0 ? 'DC' : 'AC';
+
+    return L.divIcon({
+      className: 'custom-station-marker',
+      html: `
+        <div style="position: relative; width: 44px; height: 56px;">
+          <!-- Ana İkon -->
+          <div style="
+            position: absolute;
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(145deg, ${mainColor}, ${mainColor}dd);
+            border-radius: 50% 50% 50% 0;
+            transform: rotate(-45deg);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid #fff;
+          ">
+            <!-- İç İçerik -->
+            <div style="
+              transform: rotate(45deg);
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              color: white;
+              font-weight: bold;
+              text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+            ">
+              <span style="font-size: 16px;">${totalAvailable}</span>
+              <span style="font-size: 12px;">${statusIcon}</span>
+            </div>
+          </div>
+
+          <!-- DC/AC Rozeti -->
+          ${(dcCount > 0 || acCount > 0) ? `
+            <div style="
+              position: absolute;
+              top: -4px;
+              right: -4px;
+              background: linear-gradient(135deg, #FFD700, #FFA500);
+              border: 2px solid white;
+              border-radius: 12px;
+              padding: 2px 6px;
+              font-size: 10px;
+              color: #000;
+              font-weight: bold;
+              box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            ">
+              ${chargerTypeText}
+            </div>
+          ` : ''}
+
+          <!-- Gölge -->
+          <div style="
+            position: absolute;
+            bottom: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 20px;
+            height: 6px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 50%;
+            filter: blur(2px);
+          "></div>
+
+          <!-- Pulse Efekti -->
+          ${totalAvailable > 0 ? `
+            <div style="
+              position: absolute;
+              top: -2px;
+              left: -2px;
+              width: 44px;
+              height: 44px;
+              border-radius: 50% 50% 50% 0;
+              transform: rotate(-45deg);
+              background-color: ${secondaryColor};
+              opacity: 0.6;
+              animation: pulse 2s infinite;
+            "></div>
+          ` : ''}
+        </div>
+
+        <style>
+          @keyframes pulse {
+            0% { transform: rotate(-45deg) scale(1); opacity: 0.6; }
+            50% { transform: rotate(-45deg) scale(1.2); opacity: 0.3; }
+            100% { transform: rotate(-45deg) scale(1); opacity: 0.6; }
+          }
+        </style>
+      `,
+      iconSize: [44, 56],
+      iconAnchor: [22, 56],
+      popupAnchor: [0, -48]
+    });
+  }, []);
+
+  // İstasyon kartı bileşeni
+  const StationCard = ({ station, userLocation, onRoute, onNavigate, vehicleSettings }) => {
+    const theme = useTheme();
+    
+    // Mesafe hesaplama
+    const distance = userLocation ? calculateDistance(
+      userLocation.lat,
+      userLocation.lng,
+      station.latitude,
+      station.longitude
+    ) : 0;
+
+    // Enerji hesaplamaları
+    const consumption = calculateEnergyConsumption(distance);
+    const cost = calculateEnergyCost(consumption);
+    const remainingCharge = calculateRemainingCharge(consumption);
+    const isLowBattery = remainingCharge < 20;
+
+    // Varış zamanı hesaplama (ortalama 60 km/s hız varsayımı)
+    const estimatedDuration = (distance / 60) * 60; // dakika cinsinden
+    const arrivalTime = new Date(Date.now() + estimatedDuration * 60 * 1000);
+    const formattedArrivalTime = arrivalTime.toLocaleTimeString('tr-TR', { 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+
+    return (
+      <Box
+        sx={{
+          p: 1.5,
+          mb: 1,
+          borderRadius: 2,
+          bgcolor: theme.palette.mode === 'dark' ? 'rgba(24,28,33,0.8)' : 'rgba(255,255,255,0.9)',
+          backdropFilter: 'blur(8px)',
+          border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)'}`,
+          boxShadow: '0 2px 12px rgba(0,0,0,0.1)',
+          cursor: 'pointer',
+          transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+          '&:hover': {
+            transform: 'translateY(-2px)',
+            boxShadow: '0 4px 15px rgba(0,0,0,0.15)'
+          }
+        }}
+        onClick={(e) => handleOpenDetails(station, e)}
+      >
+        {/* Üst Kısım */}
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1, alignItems: 'center' }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, fontSize: '0.9rem' }}>
+            {station.name}
+          </Typography>
+          <StationStatusChip station={station} />
+        </Box>
+
+        {/* İstatistikler */}
+        <Box sx={{ 
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr 1fr 1fr',
+          gap: 1,
+          p: 1,
+          my: 1,
+          borderRadius: 1,
+          bgcolor: theme.palette.mode === 'dark' ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)',
+          border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'}`,
+        }}>
+          {/* Mesafe */}
+          <Box sx={{ textAlign: 'center' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
+              <DirectionsIcon sx={{ fontSize: '1rem', color: theme.palette.primary.main, mr: 0.5 }} />
+              <Typography variant="caption" color="text.secondary">Mesafe</Typography>
+            </Box>
+            <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.primary.main }}>
+              {distance.toFixed(1)} km
+            </Typography>
+          </Box>
+
+          {/* Varış Zamanı (Yeni) */}
+          <Box sx={{ textAlign: 'center', borderLeft: 1, borderColor: 'divider' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
+              <AccessTimeIcon sx={{ fontSize: '1rem', color: theme.palette.grey[500], mr: 0.5 }} />
+              <Typography variant="caption" color="text.secondary">Varış</Typography>
+            </Box>
+            <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.grey[600] }}>
+              {formattedArrivalTime}
+            </Typography>
+          </Box>
+
+          {/* Tüketim */}
+          <Box sx={{ textAlign: 'center', borderLeft: 1, borderRight: 1, borderColor: 'divider' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
+              <ElectricBoltIcon sx={{ fontSize: '1rem', color: theme.palette.info.main, mr: 0.5 }} />
+              <Typography variant="caption" color="text.secondary">Tüketim</Typography>
+            </Box>
+            <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.info.main }}>
+              {consumption.toFixed(1)} kWh
+              <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', fontSize: '0.7rem' }}>
+                ≈ {cost.toFixed(0)} TL
+              </Typography>
+            </Typography>
+          </Box>
+
+          {/* Varış Şarjı */}
+          <Box sx={{ textAlign: 'center' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
+              <BatteryChargingFullIcon sx={{ 
+                fontSize: '1rem', 
+                color: isLowBattery ? theme.palette.error.main : theme.palette.success.main,
+                mr: 0.5 
+              }} />
+              <Typography variant="caption" color="text.secondary">Varış Şarjı</Typography>
+            </Box>
+            <Typography variant="body2" sx={{ 
+              fontWeight: 600,
+              color: isLowBattery ? theme.palette.error.main : theme.palette.success.main
+            }}>
+              {Math.max(remainingCharge, 0).toFixed(1)}%
+            </Typography>
+          </Box>
+        </Box>
+
+        {/* Alt Kısım - Butonlar */}
+        <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+          <Button
+            fullWidth
+            variant="contained"
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation();
+              showRoute(station);
+            }}
+            startIcon={<DirectionsIcon sx={{ fontSize: '1rem' }} />}
+            sx={{ py: 0.5, fontSize: '0.8rem' }}
+          >
+            Rota
+          </Button>
+          <IconButton
+            size="small"
+            onClick={(e) => {
+              e.stopPropagation();
+              openInGoogleMaps(station);
+            }}
+            sx={{ 
+              color: '#4285F4',
+              bgcolor: theme.palette.mode === 'dark' ? 'rgba(66,133,244,0.1)' : 'rgba(66,133,244,0.05)',
+              '&:hover': {
+                bgcolor: theme.palette.mode === 'dark' ? 'rgba(66,133,244,0.2)' : 'rgba(66,133,244,0.1)',
+              }
+            }}
+          >
+            <GoogleIcon sx={{ fontSize: '1.2rem' }} />
+          </IconButton>
+        </Box>
+      </Box>
+    );
+  };
+
   return (
     <Box sx={{ 
       height: '100vh', 
@@ -613,19 +733,19 @@ const Map = ({ stations }) => {
           />
         )}
 
-        {filteredStations.map((station) => (
+        {filteredStations.map(station => (
           <Marker
             key={station.id}
             position={[station.latitude, station.longitude]}
+            icon={getStationIcon(station)}
           >
-            <Popup className={theme.palette.mode === 'dark' ? 'dark-popup' : ''}>
-              <StationDetails
+            <Popup>
+              <StationCard
                 station={station}
                 userLocation={userLocation}
                 onRoute={() => showRoute(station)}
                 onNavigate={() => openInGoogleMaps(station)}
-                calculateEnergyConsumption={calculateEnergyConsumption}
-                calculateEnergyCost={calculateEnergyCost}
+                vehicleSettings={vehicleSettings}
               />
             </Popup>
           </Marker>
@@ -783,7 +903,7 @@ const Map = ({ stations }) => {
         </DialogTitle>
         <DialogContent dividers>
           {selectedStationDetails && (
-            <StationDetails
+            <StationCard
               station={selectedStationDetails}
               userLocation={userLocation}
               onRoute={(e) => {
@@ -797,8 +917,7 @@ const Map = ({ stations }) => {
                 handleCloseDetails();
                 openInGoogleMaps(selectedStationDetails);
               }}
-              calculateEnergyConsumption={calculateEnergyConsumption}
-              calculateEnergyCost={calculateEnergyCost}
+              vehicleSettings={vehicleSettings}
             />
           )}
         </DialogContent>
@@ -949,106 +1068,156 @@ const Map = ({ stations }) => {
             </Box>
           </Box>
 
-          {filteredNearbyStations.map(station => (
-            <Box
-              key={station.id}
-              sx={{
-                p: 2,
-                mb: 1,
-                borderRadius: 1,
-                bgcolor: 'background.paper',
-                boxShadow: 1,
-                cursor: 'pointer',
-                '&:hover': { bgcolor: 'action.hover' }
-              }}
-              onClick={(e) => handleOpenDetails(station, e)}
-            >
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
-                  {station.name}
-                </Typography>
-                <StationStatusChip station={station} />
-              </Box>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 1 }}>
-                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                  {station.connector_count > 0 && (
-                    <Chip
-                      icon={<BatteryChargingFullIcon sx={{ color: '#00ff00' }} />}
-                      label={`${station.available_dc}/${station.connector_count} DC Müsait`}
-                      size="small"
-                      color="success"
-                      sx={{ 
-                        '& .MuiChip-icon': { 
-                          fontSize: '1.4rem'
-                        }
-                      }}
-                    />
-                  )}
-                  {station.available_ac > 0 && (
-                    <Chip
-                      icon={<Battery5BarIcon sx={{ color: '#87CEEB' }} />}
-                      label={`${station.available_ac} AC Müsait`}
-                      size="small"
-                      color="info"
-                      sx={{ '& .MuiChip-icon': { fontSize: '1.2rem' } }}
-                    />
-                  )}
-                  {station.error_count > 0 && (
-                    <Chip
-                      icon={<PowerOffIcon />}
-                      label={`${station.error_count} Arızalı`}
-                      size="small"
-                      color="error"
-                      sx={{ '& .MuiChip-icon': { fontSize: '1.2rem' } }}
-                    />
-                  )}
+          {filteredNearbyStations.map(station => {
+            // Mesafe ve enerji hesaplamaları
+            const distance = calculateDistance(
+              userLocation.lat,
+              userLocation.lng,
+              station.latitude,
+              station.longitude
+            );
+            const consumption = calculateEnergyConsumption(distance);
+            const cost = calculateEnergyCost(consumption);
+            const remainingCharge = calculateRemainingCharge(consumption);
+            const isLowBattery = remainingCharge < 20;
+
+            // Varış zamanı hesaplama (ortalama 60 km/s hız varsayımı)
+            const estimatedDuration = (distance / 60) * 60; // dakika cinsinden
+            const arrivalTime = new Date(Date.now() + estimatedDuration * 60 * 1000);
+            const formattedArrivalTime = arrivalTime.toLocaleTimeString('tr-TR', { 
+              hour: '2-digit', 
+              minute: '2-digit' 
+            });
+
+            return (
+              <Box
+                key={station.id}
+                sx={{
+                  p: 1.5,
+                  mb: 1,
+                  borderRadius: 2,
+                  bgcolor: theme.palette.mode === 'dark' ? 'rgba(24,28,33,0.8)' : 'rgba(255,255,255,0.9)',
+                  backdropFilter: 'blur(8px)',
+                  border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)'}`,
+                  boxShadow: '0 2px 12px rgba(0,0,0,0.1)',
+                  cursor: 'pointer',
+                  transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                  '&:hover': {
+                    transform: 'translateY(-2px)',
+                    boxShadow: '0 4px 15px rgba(0,0,0,0.15)'
+                  }
+                }}
+                onClick={(e) => handleOpenDetails(station, e)}
+              >
+                {/* İstasyon Başlığı */}
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1, alignItems: 'center' }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 600, fontSize: '0.9rem' }}>
+                    {station.name}
+                  </Typography>
+                  <StationStatusChip station={station} />
                 </Box>
+
+                {/* İstatistikler */}
                 <Box sx={{ 
-                  display: 'flex', 
-                  justifyContent: 'space-between',
-                  alignItems: 'center'
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr 1fr 1fr',
+                  gap: 1,
+                  p: 1,
+                  my: 1,
+                  borderRadius: 1,
+                  bgcolor: theme.palette.mode === 'dark' ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)',
+                  border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'}`,
                 }}>
-                  <Box>
-                    <Typography variant="body2" color="text.secondary">
-                      Mesafe: {station.distance.toFixed(1)} km
-                    </Typography>
-                    <Typography variant="body2" color="info.main" sx={{ fontWeight: 'bold' }}>
-                      Tüketim: {calculateEnergyConsumption(station.distance).toFixed(1)} kWh
-                      {' ≈ '}
-                      {calculateEnergyCost(calculateEnergyConsumption(station.distance)).toFixed(0)} TL
-                    </Typography>
-                    <Typography 
-                      variant="body2" 
-                      color={calculateRemainingCharge(calculateEnergyConsumption(station.distance)) < 20 ? 'error.main' : 'success.main'}
-                      sx={{ fontWeight: 'bold' }}
-                    >
-                      Varış Şarjı: {Math.max(calculateRemainingCharge(calculateEnergyConsumption(station.distance)), 0).toFixed(1)}%
+                  {/* Mesafe */}
+                  <Box sx={{ textAlign: 'center' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
+                      <DirectionsIcon sx={{ fontSize: '1rem', color: theme.palette.primary.main, mr: 0.5 }} />
+                      <Typography variant="caption" color="text.secondary">Mesafe</Typography>
+                    </Box>
+                    <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.primary.main }}>
+                      {distance.toFixed(1)} km
                     </Typography>
                   </Box>
-                  <Box sx={{ display: 'flex', gap: 1 }}>
-                    <IconButton
-                      size="small"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        showRoute(station);
-                      }}
-                    >
-                      <DirectionsIcon />
-                    </IconButton>
-                    <IconButton
-                      size="small"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openInGoogleMaps(station);
-                      }}
-                    >
-                      <NearMeIcon />
-                    </IconButton>
+
+                  {/* Varış Zamanı (Yeni) */}
+                  <Box sx={{ textAlign: 'center', borderLeft: 1, borderColor: 'divider' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
+                      <AccessTimeIcon sx={{ fontSize: '1rem', color: theme.palette.grey[500], mr: 0.5 }} />
+                      <Typography variant="caption" color="text.secondary">Varış</Typography>
+                    </Box>
+                    <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.grey[600] }}>
+                      {formattedArrivalTime}
+                    </Typography>
+                  </Box>
+
+                  {/* Tüketim */}
+                  <Box sx={{ textAlign: 'center', borderLeft: 1, borderRight: 1, borderColor: 'divider' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
+                      <ElectricBoltIcon sx={{ fontSize: '1rem', color: theme.palette.info.main, mr: 0.5 }} />
+                      <Typography variant="caption" color="text.secondary">Tüketim</Typography>
+                    </Box>
+                    <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.info.main }}>
+                      {consumption.toFixed(1)} kWh
+                      <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', fontSize: '0.7rem' }}>
+                        ≈ {cost.toFixed(0)} TL
+                      </Typography>
+                    </Typography>
+                  </Box>
+
+                  {/* Varış Şarjı */}
+                  <Box sx={{ textAlign: 'center' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
+                      <BatteryChargingFullIcon sx={{ 
+                        fontSize: '1rem', 
+                        color: isLowBattery ? theme.palette.error.main : theme.palette.success.main,
+                        mr: 0.5 
+                      }} />
+                      <Typography variant="caption" color="text.secondary">Varış Şarjı</Typography>
+                    </Box>
+                    <Typography variant="body2" sx={{ 
+                      fontWeight: 600,
+                      color: isLowBattery ? theme.palette.error.main : theme.palette.success.main
+                    }}>
+                      {Math.max(remainingCharge, 0).toFixed(1)}%
+                    </Typography>
                   </Box>
                 </Box>
+
+                {/* Alt Kısım - Butonlar */}
+                <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+                  <Button
+                    fullWidth
+                    variant="contained"
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      showRoute(station);
+                    }}
+                    startIcon={<DirectionsIcon sx={{ fontSize: '1rem' }} />}
+                    sx={{ py: 0.5, fontSize: '0.8rem' }}
+                  >
+                    Rota
+                  </Button>
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openInGoogleMaps(station);
+                    }}
+                    sx={{ 
+                      color: '#4285F4',
+                      bgcolor: theme.palette.mode === 'dark' ? 'rgba(66,133,244,0.1)' : 'rgba(66,133,244,0.05)',
+                      '&:hover': {
+                        bgcolor: theme.palette.mode === 'dark' ? 'rgba(66,133,244,0.2)' : 'rgba(66,133,244,0.1)',
+                      }
+                    }}
+                  >
+                    <GoogleIcon sx={{ fontSize: '1.2rem' }} />
+                  </IconButton>
+                </Box>
               </Box>
-            </Box>
-          ))}
+            );
+          })}
         </Box>
       </Paper>
     </Box>
