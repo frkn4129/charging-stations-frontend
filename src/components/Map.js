@@ -1,1525 +1,1997 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
-import { Box, Paper, Typography, Button, IconButton, Fab, Chip, useTheme, Dialog, DialogTitle, DialogContent, DialogActions, IconButton as MuiIconButton, ToggleButton, ToggleButtonGroup, FormControlLabel, Switch, Tooltip, TextField, InputAdornment } from '@mui/material';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { GoogleMap, LoadScript, Marker, InfoWindow, Polyline, OverlayView } from '@react-google-maps/api';
+import { 
+  Box, 
+  Paper, 
+  Typography, 
+  Button, 
+  Fab, 
+  useTheme, 
+  FormControlLabel, 
+  Switch, 
+  ToggleButton, 
+  ToggleButtonGroup,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  IconButton,
+  Collapse,
+  Tooltip,
+  useMediaQuery,
+  Snackbar,
+  Alert,
+  CircularProgress,
+  Rating,
+  TextField,
+  List,
+  ListItem,
+  ListItemText,
+  Pagination,
+  Chip
+} from '@mui/material';
+import { LoadingButton } from '@mui/lab';
 import DirectionsIcon from '@mui/icons-material/Directions';
-import NearMeIcon from '@mui/icons-material/NearMe';
+import MyLocationIcon from '@mui/icons-material/MyLocation';
+import FilterAltIcon from '@mui/icons-material/FilterAlt';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import EvStationIcon from '@mui/icons-material/EvStation';
-import BatteryChargingFullIcon from '@mui/icons-material/BatteryChargingFull';
-import BatteryAlertIcon from '@mui/icons-material/BatteryAlert';
-import PowerOffIcon from '@mui/icons-material/PowerOff';
-import MyLocationIcon from '@mui/icons-material/MyLocation';
-import CloseIcon from '@mui/icons-material/Close';
-import FilterAltIcon from '@mui/icons-material/FilterAlt';
-import BoltIcon from '@mui/icons-material/Bolt';
-import ElectricBoltIcon from '@mui/icons-material/ElectricBolt';
-import FlashOnIcon from '@mui/icons-material/FlashOn';
-import Battery5BarIcon from '@mui/icons-material/Battery5Bar';
-import SettingsIcon from '@mui/icons-material/Settings';
-import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import ElectricCarIcon from '@mui/icons-material/ElectricCar';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import GoogleIcon from '@mui/icons-material/Google';
-import 'leaflet/dist/leaflet.css';
-import L from 'leaflet';
+import BatteryChargingFullIcon from '@mui/icons-material/BatteryChargingFull';
+import TimerIcon from '@mui/icons-material/Timer';
+import BoltIcon from '@mui/icons-material/Bolt';
+import LocalGasStationIcon from '@mui/icons-material/LocalGasStation';
+import PercentIcon from '@mui/icons-material/Percent';
+import SettingsIcon from '@mui/icons-material/Settings';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import Slider from '@mui/material/Slider';
+import InputAdornment from '@mui/material/InputAdornment';
+import { getStationReviews, submitReview } from '../api/reviews';
 
-// Leaflet default icon sorunu için fix
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconUrl: require('leaflet/dist/images/marker-icon.png'),
-  iconRetinaUrl: require('leaflet/dist/images/marker-icon-2x.png'),
-  shadowUrl: require('leaflet/dist/images/marker-shadow.png'),
-});
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080/api';
+const libraries = ["places", "geometry"];
+const GOOGLE_MAPS_API_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
 
-// Mesafe hesaplama fonksiyonu
-const calculateDistance = (lat1, lon1, lat2, lon2) => {
-  const R = 6371; // Dünya'nın yarıçapı (km)
-  const dLat = (lat2 - lat1) * (Math.PI / 180);
-  const dLon = (lon2 - lon1) * (Math.PI / 180);
-  const a = 
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * 
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-};
-
-// Dark tema için harita stil URL'leri
-const mapStyles = {
-  light: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-  dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
-};
-
-// Varış zamanı hesaplama fonksiyonu (dosyanın üst kısmına ekleyin)
-const calculateArrivalTime = (distance) => {
-  // Mesafeye göre ortalama hız belirleme (km/s)
-  let averageSpeed;
-  if (distance < 5) {
-    averageSpeed = 30; // Şehir içi
-  } else if (distance < 20) {
-    averageSpeed = 45; // Şehir çevresi
-  } else {
-    averageSpeed = 80; // Şehiriçi otoyol
-  }
-
-  // Saat faktörüne göre trafik düzeltmesi
-  const hour = new Date().getHours();
-  let trafficMultiplier = 1;
-  
-  // Yoğun trafik saatleri
-  if ((hour >= 8 && hour <= 10) || (hour >= 17 && hour <= 19)) {
-    trafficMultiplier = 1.5; // Trafik yoğun
-  } else if ((hour >= 7 && hour < 8) || (hour > 10 && hour <= 16) || (hour > 19 && hour <= 21)) {
-    trafficMultiplier = 1.2; // Normal trafik
-  }
-
-  // Tahmini süre hesaplama (saat cinsinden)
-  const estimatedHours = (distance / averageSpeed) * trafficMultiplier;
-  
-  // Varış zamanı hesaplama
-  const arrivalTime = new Date(Date.now() + estimatedHours * 60 * 60 * 1000);
-  
-  return {
-    time: arrivalTime.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
-    duration: Math.round(estimatedHours * 60) // Dakika cinsinden süre
-  };
-};
-
-function LocationMarker({ onLocationFound }) {
-  const map = useMap();
-  const [locationError, setLocationError] = useState(false);
-
-  const getCurrentLocation = () => {
-    if ("geolocation" in navigator) {
-      const options = {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0
-      };
-
-      navigator.permissions.query({ name: 'geolocation' }).then(function(result) {
-        if (result.state === 'granted' || result.state === 'prompt') {
-          navigator.geolocation.getCurrentPosition(
-            (position) => {
-              const { latitude, longitude } = position.coords;
-              const latlng = { lat: latitude, lng: longitude };
-              
-              // Kullanıcı konumu için özel marker
-              const userIcon = L.divIcon({
-                className: 'custom-user-marker',
-                html: `
-                  <div style="
-                    background-color: #2196f3;
-                    width: 24px;
-                    height: 24px;
-                    border-radius: 50%;
-                    border: 3px solid white;
-                    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                  ">
-                    <div style="
-                      width: 8px;
-                      height: 8px;
-                      background: white;
-                      border-radius: 50%;
-                    "></div>
-                  </div>
-                `,
-                iconSize: [24, 24],
-                iconAnchor: [12, 12]
-              });
-
-              // Önceki marker'ı temizle
-              map.eachLayer((layer) => {
-                if (layer instanceof L.Marker && layer.options.icon && layer.options.icon.options.className === 'custom-user-marker') {
-                  map.removeLayer(layer);
-                }
-              });
-
-              // Yeni marker ekle
-              L.marker(latlng, { icon: userIcon }).addTo(map);
-              
-              onLocationFound(latlng);
-              map.setView(latlng, 13);
-              setLocationError(false);
-            },
-            (error) => {
-              console.error('Konum alınamadı:', error);
-              setLocationError(true);
-              // Varsayılan konum: Ankara
-              const defaultLocation = { lat: 39.925533, lng: 32.866287 };
-              onLocationFound(defaultLocation);
-              map.setView([defaultLocation.lat, defaultLocation.lng], 13);
-            },
-            options
-          );
-        } else {
-          setLocationError(true);
-        }
-      });
-    }
-  };
-
-  useEffect(() => {
-    getCurrentLocation();
-
-    // Konum izleme
-    const watchId = navigator.geolocation.watchPosition(
-      (position) => {
-        const { latitude, longitude } = position.coords;
-        const latlng = { lat: latitude, lng: longitude };
-        onLocationFound(latlng);
-      },
-      (error) => {
-        console.error('Konum izleme hatası:', error);
-      },
-      { enableHighAccuracy: true }
-    );
-
-    return () => {
-      navigator.geolocation.clearWatch(watchId);
-    };
-  }, [map, onLocationFound]);
-
-  return (
-    locationError && (
-      <Paper
-        sx={{
-          position: 'fixed',
-          top: 16,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 1001,
-          p: 2,
-          bgcolor: 'rgba(255, 255, 255, 0.95)',
-          borderRadius: 2,
-          maxWidth: '90%',
-          textAlign: 'center',
-          boxShadow: 3
-        }}
-      >
-        <Typography variant="body2" color="error">
-          Konumunuza erişilemiyor. Lütfen konum iznini kontrol edin.
-        </Typography>
-        <Button
-          size="small"
-          variant="contained"
-          sx={{ mt: 1 }}
-          onClick={getCurrentLocation}
-        >
-          Konumu Etkinleştir
-        </Button>
-      </Paper>
-    )
-  );
-}
-
-const StationStatusChip = ({ station }) => {
+const MapComponent = () => {
   const theme = useTheme();
-  
-  const getStatusInfo = () => {
-    const dcAvailable = station.available_dc > 0;
-    const acAvailable = station.available_ac > 0;
-
-    if (station.error_count === station.connector_count) {
-      return {
-        icon: <PowerOffIcon />,
-        label: 'Tümü Arızalı',
-        color: theme.palette.error.main,
-      };
-    }
-
-    if (!dcAvailable && !acAvailable && station.unavailable_count > 0) {
-      return {
-        icon: <BatteryAlertIcon />,
-        label: 'Tümü Meşgul',
-        color: theme.palette.warning.main,
-      };
-    }
-
-    return {
-      icon: <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-        {station.connector_count > 0 && (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-            <BatteryChargingFullIcon sx={{ 
-              fontSize: '1.4rem',
-              color: '#00ff00'
-            }} />
-            <Typography variant="caption" sx={{ color: '#fff' }}>
-              {`${station.available_dc}/${station.connector_count} DC Müsait`}
-            </Typography>
-          </Box>
-        )}
-        {station.available_ac > 0 && (
-          <Box sx={{ display: 'flex', alignItems: 'center', ml: 1, gap: 0.5 }}>
-            <Battery5BarIcon sx={{ 
-              fontSize: '1.2rem',
-              color: '#87CEEB'
-            }} />
-            <Typography variant="caption" sx={{ color: '#fff' }}>
-              {`${station.available_ac} AC Müsait`}
-            </Typography>
-          </Box>
-        )}
-      </Box>,
-      label: '',
-      color: theme.palette.success.main,
-    };
-  };
-
-  const statusInfo = getStatusInfo();
-  return (
-    <Chip
-      icon={statusInfo.icon}
-      label={statusInfo.label}
-      sx={{
-        bgcolor: statusInfo.color,
-        color: '#fff',
-        fontWeight: 'bold',
-        height: 'auto',
-        '& .MuiChip-icon': {
-          color: '#fff',
-          marginLeft: statusInfo.label ? '12px' : '0px',
-          marginRight: statusInfo.label ? '-6px' : '0px',
-        },
-        '& .MuiChip-label': {
-          padding: '4px 8px',
-        }
-      }}
-    />
-  );
-};
-
-const Map = ({ stations }) => {
-  const theme = useTheme();
+  const [isMapReady, setIsMapReady] = useState(false);
+  const [stations, setStations] = useState([]);
   const [userLocation, setUserLocation] = useState(null);
-  const [nearbyStations, setNearbyStations] = useState([]);
   const [selectedStation, setSelectedStation] = useState(null);
   const [routeCoordinates, setRouteCoordinates] = useState(null);
-  const [isPanelOpen, setIsPanelOpen] = useState(false);
-  const mapRef = useRef(null);
-  const [selectedStationDetails, setSelectedStationDetails] = useState(null);
+  const [showTable, setShowTable] = useState(true);
+  const [filteredStations, setFilteredStations] = useState([]);
   const [filters, setFilters] = useState({
     onlyAvailable: false,
     showDC: true,
     showAC: true,
   });
   const [showFilters, setShowFilters] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [vehicleSettings, setVehicleSettings] = useState({
-    consumption: 16.5,
-    pricePerKWh: 8,
-    batteryCapacity: 60,
-    currentCharge: 80,
+  const [batteryLevel, setBatteryLevel] = useState(80);
+  const [batteryCapacity, setBatteryCapacity] = useState(84);
+  const [electricityPrice, setElectricityPrice] = useState(7.5);
+  const [averageConsumption, setAverageConsumption] = useState(18);
+  const [showVehicleInfo, setShowVehicleInfo] = useState(false);
+  const [isLoading, setIsLoading] = useState({
+    stations: false,
+    route: false,
+    distance: false
   });
+  const [error, setError] = useState(null);
+  const [snackbar, setSnackbar] = useState({
+    open: false,
+    message: '',
+    severity: 'info'
+  });
+  const [showSettings, setShowSettings] = useState(false);
+  const [map, setMap] = useState(null);
+  const prevLocation = useRef(null);
+  const prevRotation = useRef(0);
 
-  // Panel yükseklik durumları
-  const PANEL_STATES = {
-    CLOSED: '-100vh',  // Tamamen kapalı
-    HALF: '40vh',
-    FULL: '80vh'
+  const defaultCenter = useMemo(() => ({
+    lat: 39.925533,
+    lng: 32.866287
+  }), []);
+
+  const mapContainerStyle = {
+    width: '100%',
+    height: '100vh'
   };
 
-  // Panel başlangıç durumu
-  const [panelHeight, setPanelHeight] = useState(PANEL_STATES.HALF);
-  const [isDragging, setIsDragging] = useState(false);
-  const [startY, setStartY] = useState(0);
-  const [currentY, setCurrentY] = useState(0);
-  const panelRef = useRef(null);
+  const mapOptions = useMemo(() => ({
+    disableDefaultUI: false,
+    zoomControl: true,
+    mapTypeControl: false,
+    streetViewControl: false,
+    fullscreenControl: false,
+    styles: [
+      {
+        featureType: "poi",
+        elementType: "labels",
+        stylers: [{ visibility: "off" }]
+      }
+    ]
+  }), []);
 
-  // Harita stil URL'sini tema moduna göre seç
-  const mapStyle = theme.palette.mode === 'dark' ? mapStyles.dark : mapStyles.light;
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  // Kullanıcı konumu değiştiğinde en yakın istasyonları hesapla
   useEffect(() => {
-    if (userLocation && stations) {
-      const stationsWithDistance = stations.map(station => ({
-        ...station,
-        distance: calculateDistance(
-          userLocation.lat,
-          userLocation.lng,
-          station.latitude,
-          station.longitude
-        )
-      }))
-      .sort((a, b) => a.distance - b.distance)
-      .slice(0, 10);
-
-      setNearbyStations(stationsWithDistance);
-    }
-  }, [userLocation, stations]);
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'AVAILABLE':
-        return theme.palette.status.available;
-      case 'PARTIALLY_AVAILABLE':
-        return theme.palette.status.busy;
-      case 'UNAVAILABLE':
-        return theme.palette.status.offline;
-      default:
-        return theme.palette.grey[500];
-    }
-  };
-
-  const getStatusLabel = (status) => {
-    switch (status) {
-      case 'AVAILABLE':
-        return 'Müsait';
-      case 'PARTIALLY_AVAILABLE':
-        return 'Kısmen Müsait';
-      case 'UNAVAILABLE':
-        return 'Meşgul';
-      default:
-        return 'Bilinmiyor';
-    }
-  };
-
-  // Google Maps'te rotayı aç
-  const openInGoogleMaps = (station) => {
-    if (userLocation) {
-      const url = `https://www.google.com/maps/dir/?api=1&origin=${userLocation.lat},${userLocation.lng}&destination=${station.latitude},${station.longitude}&travelmode=driving`;
-      window.open(url, '_blank');
-    }
-  };
-
-  // Rota çizme
-  const showRoute = async (station) => {
-    if (userLocation) {
+    const fetchStations = async () => {
       try {
-        const response = await fetch(
-          `https://router.project-osrm.org/route/v1/driving/${userLocation.lng},${userLocation.lat};${station.longitude},${station.latitude}?overview=full&geometries=geojson`
-        );
+        const response = await fetch(`${API_BASE_URL}/stations`);
+        if (!response.ok) throw new Error('Network response was not ok');
         const data = await response.json();
         
-        if (data.routes && data.routes[0]) {
-          setRouteCoordinates(data.routes[0].geometry.coordinates.map(coord => [coord[1], coord[0]]));
-          setSelectedStation(station);
-        }
+        // İstasyonları ve istatistikleri set et
+        setStations(data);
+        setFilteredStations(data);
       } catch (error) {
-        console.error('Rota alınamadı:', error);
+        console.error('Error fetching stations:', error);
       }
-    }
-  };
+    };
 
-  // Konuma git fonksiyonu
-  const goToMyLocation = () => {
-    if (userLocation) {
-      mapRef.current?.setView(
-        [userLocation.lat, userLocation.lng],
-        13,
-        { animate: true }
-      );
-    }
-  };
-
-  // Modal' açma/kapama fonksiyonları
-  const handleOpenDetails = (station, e) => {
-    e.stopPropagation();
-    setSelectedStationDetails(station);
-    
-    // Haritayı istasyon konumuna taşı
-    mapRef.current?.setView(
-      [station.latitude, station.longitude],
-      15, // Daha yakın zoom seviyesi
-      {
-        animate: true,
-        duration: 1 // Animasyon süresi (saniye)
-      }
-    );
-
-    // İstasyonu işaretle (opsiyonel)
-    const marker = L.marker([station.latitude, station.longitude]);
-    marker.bindPopup(station.name).openPopup();
-  };
-
-  const handleCloseDetails = () => {
-    setSelectedStationDetails(null);
-  };
-
-  // Filtreleme fonksiyonu
-  const getFilteredStations = (stationList) => {
-    return stationList.filter(station => {
-      // Sadece müsait olanları göster
-      if (filters.onlyAvailable) {
-        if (filters.showDC && station.available_dc === 0 && filters.showAC && station.available_ac === 0) {
-          return false;
-        }
-      }
-
-      // DC/AC filtresi
-      if (!filters.showDC && !filters.showAC) return false;
-      if (!filters.showDC && station.connector_count > 0) return false;
-      if (!filters.showAC && station.available_ac > 0) return false;
-
-      return true;
-    });
-  };
-
-  // Filtrelenmiş istasyonları hesapla
-  const filteredStations = getFilteredStations(stations);
-  const filteredNearbyStations = getFilteredStations(nearbyStations);
-
-  // Enerji hesaplama fonksiyonları
-  const calculateEnergyConsumption = useCallback((distance) => {
-    return (distance * vehicleSettings.consumption) / 100;
-  }, [vehicleSettings.consumption]);
-
-  const calculateEnergyCost = useCallback((kWh) => {
-    return kWh * vehicleSettings.pricePerKWh;
-  }, [vehicleSettings.pricePerKWh]);
-
-  const calculateRemainingCharge = useCallback((consumedEnergy) => {
-    const currentEnergyKWh = (vehicleSettings.batteryCapacity * vehicleSettings.currentCharge) / 100;
-    const remainingKWh = currentEnergyKWh - consumedEnergy;
-    return (remainingKWh / vehicleSettings.batteryCapacity) * 100;
-  }, [vehicleSettings.batteryCapacity, vehicleSettings.currentCharge]);
-
-  // İstasyon marker ikonunu oluştur
-  const getStationIcon = useCallback((station) => {
-    // İstasyon durumuna göre stil belirleme
-    let mainColor, secondaryColor, statusIcon;
-    
-    if (station.error_count === station.connector_count) {
-      mainColor = '#f44336';  // Kırmızı - arızalı
-      secondaryColor = '#ffcdd2';
-      statusIcon = '⚠️';
-    } else if (station.available_dc === 0 && station.available_ac === 0) {
-      mainColor = '#ff9800';  // Turuncu - meşgul
-      secondaryColor = '#ffe0b2';
-      statusIcon = '⌛';
-    } else {
-      mainColor = '#0D47A1';  // Daha koyu mavi - müsait (#1976d2 yerine #0D47A1)
-      secondaryColor = '#64B5F6';
-      statusIcon = '⚡';
-    }
-
-    const dcCount = station.available_dc;
-    const acCount = station.available_ac;
-    const totalAvailable = dcCount + acCount;
-
-    // DC/AC rozet metni
-    const chargerTypeText = dcCount > 0 && acCount > 0 ? 'DC/AC' : dcCount > 0 ? 'DC' : 'AC';
-
-    return L.divIcon({
-      className: 'custom-station-marker',
-      html: `
-        <div style="position: relative; width: 44px; height: 56px;">
-          <!-- Ana İkon -->
-          <div style="
-            position: absolute;
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(145deg, ${mainColor}, ${mainColor}dd);
-            border-radius: 50% 50% 50% 0;
-            transform: rotate(-45deg);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border: 2px solid #fff;
-          ">
-            <!-- İç İçerik -->
-            <div style="
-              transform: rotate(45deg);
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              color: white;
-              font-weight: bold;
-              text-shadow: 0 1px 2px rgba(0,0,0,0.2);
-            ">
-              <span style="font-size: 16px;">${totalAvailable}</span>
-              <span style="font-size: 12px;">${statusIcon}</span>
-            </div>
-          </div>
-
-          <!-- DC/AC Rozeti -->
-          ${(dcCount > 0 || acCount > 0) ? `
-            <div style="
-              position: absolute;
-              top: -4px;
-              right: -4px;
-              background: linear-gradient(135deg, #FFD700, #FFA500);
-              border: 2px solid white;
-              border-radius: 12px;
-              padding: 2px 6px;
-              font-size: 10px;
-              color: #000;
-              font-weight: bold;
-              box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-            ">
-              ${chargerTypeText}
-            </div>
-          ` : ''}
-
-          <!-- Gölge -->
-          <div style="
-            position: absolute;
-            bottom: 8px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 20px;
-            height: 6px;
-            background: rgba(0,0,0,0.2);
-            border-radius: 50%;
-            filter: blur(2px);
-          "></div>
-
-          <!-- Pulse Efekti -->
-          ${totalAvailable > 0 ? `
-            <div style="
-              position: absolute;
-              top: -2px;
-              left: -2px;
-              width: 44px;
-              height: 44px;
-              border-radius: 50% 50% 50% 0;
-              transform: rotate(-45deg);
-              background-color: ${secondaryColor};
-              opacity: 0.6;
-              animation: pulse 2s infinite;
-            "></div>
-          ` : ''}
-        </div>
-
-        <style>
-          @keyframes pulse {
-            0% { transform: rotate(-45deg) scale(1); opacity: 0.6; }
-            50% { transform: rotate(-45deg) scale(1.2); opacity: 0.3; }
-            100% { transform: rotate(-45deg) scale(1); opacity: 0.6; }
-          }
-        </style>
-      `,
-      iconSize: [44, 56],
-      iconAnchor: [22, 56],
-      popupAnchor: [0, -48]
-    });
+    fetchStations();
   }, []);
 
-  // İstasyon kartı bileşeni
-  const StationCard = ({ station, userLocation, onRoute, onNavigate, vehicleSettings }) => {
-    const theme = useTheme();
+  useEffect(() => {
+    if (navigator.geolocation) {
+      const watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          const newLocation = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          };
+          setUserLocation(newLocation);
+        },
+        (error) => {
+          console.error('Konum alınamadı:', error);
+          setSnackbar({
+            open: true,
+            message: 'Konum alınamadı. Lütfen konum izinlerini kontrol edin.',
+            severity: 'error'
+          });
+        },
+        {
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 5000
+        }
+      );
+
+      return () => {
+        navigator.geolocation.clearWatch(watchId);
+      };
+    }
+  }, []);
+
+  useEffect(() => {
+    let filtered = [...stations];
+
+    if (filters.onlyAvailable) {
+      filtered = filtered.filter(station => 
+        station.available_dc > 0 || station.available_ac > 0
+      );
+    }
+
+    if (!filters.showDC) {
+      filtered = filtered.filter(station => station.available_ac > 0);
+    }
+
+    if (!filters.showAC) {
+      filtered = filtered.filter(station => station.available_dc > 0);
+    }
+
+    setFilteredStations(filtered);
+  }, [filters, stations]);
+
+  const showRoute = useCallback(async (station) => {
+    if (!userLocation) return;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/stations/route`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          origin_lat: userLocation.lat,
+          origin_lng: userLocation.lng,
+          destination_lat: station.latitude,
+          destination_lng: station.longitude,
+        }),
+      });
+
+      const data = await response.json();
+      setRouteCoordinates(data);
+      setSelectedStation(station);
+    } catch (error) {
+      console.error('Error getting route:', error);
+    }
+  }, [userLocation]);
+
+  const getMarkerIcon = useCallback((station) => {
+    const isSelected = selectedStation?.id === station.id;
+    const scale = isSelected ? 1.2 : 1;
+    const status = getStationStatus(station);
+
+    // Material-UI'ın EvStationIcon'unun SVG path'i
+    const stationPath = `
+      M 12,0 C 5.38,0 0,5.38 0,12 C 0,18.62 5.38,24 12,24 C 18.62,24 24,18.62 24,12 C 24,5.38 18.62,0 12,0 Z
+      M 7.5,5.5 h 9 v 13 h -9 z
+      M 9,8 v 8 h 6 v -8 h -6 z
+      M 10.5,10 h 3 v 4 h -3 z
+      M 12,3 v 2 h -2 v 1 h 4 v -1 h -2 z
+    `;
+
+    return {
+      path: stationPath,
+      fillColor: getStatusColor(station),
+      fillOpacity: status === 'ERROR' ? 0.5 : 1,
+      strokeColor: '#ffffff',
+      strokeWeight: 1.5,
+      scale: scale * 1.5,
+      anchor: new window.google.maps.Point(12, 12)
+    };
+  }, [selectedStation]);
+
+  const getStationStatus = useCallback((station) => {
+    if (station.error_count === station.connector_count) {
+      return 'ERROR';
+    } else if (station.available_dc === 0 && station.available_ac === 0) {
+      return 'BUSY';
+    }
+    return 'AVAILABLE';
+  }, []);
+
+  const getStatusColor = useCallback((station) => {
+    const status = getStationStatus(station);
+    switch (status) {
+      case 'ERROR':
+        return '#ef5350'; // Kırmızı - Arızalı
+      case 'BUSY':
+        return '#ffa726'; // Turuncu - Tüm soketler kullanımda
+      default:
+        return '#66bb6a'; // Yeşil - Müsait soket var
+    }
+  }, []);
+
+  const getStatusText = useCallback((station) => {
+    const status = getStationStatus(station);
+    switch (status) {
+      case 'ERROR':
+        return 'Arızalı';
+      case 'BUSY':
+        return 'Meşgul';
+      default:
+        return 'Müsait';
+    }
+  }, []);
+
+  const calculateChargeCost = useCallback((requiredCharge) => {
+    return (requiredCharge * electricityPrice).toFixed(2);
+  }, [electricityPrice]);
+
+  const calculateRange = useCallback(() => {
+    const remainingCapacity = (batteryLevel / 100) * batteryCapacity;
+    return ((remainingCapacity / averageConsumption) * 100).toFixed(1);
+  }, [batteryLevel, batteryCapacity, averageConsumption]);
+
+  const calculateChargeTime = useCallback((station) => {
+    const requiredCharge = batteryCapacity * (1 - batteryLevel / 100);
+    const chargePower = station.available_dc > 0 ? 50 : 22; // DC: 50kW, AC: 22kW
+    return (requiredCharge / chargePower).toFixed(1);
+  }, [batteryCapacity, batteryLevel]);
+
+  const calculateHaversineDistance = useCallback((lat1, lon1, lat2, lon2) => {
+    const R = 6371; // Dünya'nın yarıçapı (km)
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  }, []);
+
+  // Gerçek mesafe ve süre hesaplama
+  const getRouteDetails = async (station) => {
+    if (!userLocation) return null;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/stations/distance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lat1: userLocation.lat,
+          lon1: userLocation.lng,
+          lat2: station.latitude,
+          lon2: station.longitude,
+        }),
+      });
+
+      if (response.status === 429) {
+        // Rate limit aşıldı
+        setSnackbar({
+          open: true,
+          message: "Çok fazla istek gönderildi. Lütfen biraz bekleyin.",
+          severity: "warning"
+        });
+        return null;
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to calculate distance');
+      }
+
+        const data = await response.json();
+      return {
+        distance: (data.distance).toFixed(1),
+        duration: Math.round(data.duration / 60),
+        consumption: ((data.distance * averageConsumption) / 100).toFixed(1)
+      };
+      } catch (error) {
+      console.error('Error calculating route details:', error);
+      return null;
+    }
+  };
+
+  // useEffect içinde en yakın 10 istasyonu hesapla ve sırala
+  useEffect(() => {
+    if (!userLocation || !stations.length) return;
+
+    // 1. Tüm istasyonlar için kuş bakışı mesafeyi hesapla
+    const stationsWithDistance = stations.map(station => {
+      const distance = calculateHaversineDistance(
+        userLocation.lat,
+        userLocation.lng,
+        station.latitude,
+        station.longitude
+      );
+
+      // Ortalama hız 60 km/s varsayarak süreyi hesapla
+      const duration = Math.round((distance / 60) * 60); // dakika cinsinden
+      const consumption = ((distance * averageConsumption) / 100).toFixed(1);
+      const isReachable = distance <= calculateRange();
+
+      return {
+        ...station,
+        routeDetails: {
+          distance: distance.toFixed(1),
+          duration: duration,
+          consumption: consumption,
+          isReachable
+        }
+      };
+    });
+
+    // 2. Mesafeye göre sırala ve ilk 10'u al
+    const nearestStations = stationsWithDistance
+      .sort((a, b) => parseFloat(a.routeDetails.distance) - parseFloat(b.routeDetails.distance))
+      .slice(0, 10);
+
+    setFilteredStations(nearestStations);
+  }, [userLocation, stations, calculateHaversineDistance, averageConsumption, calculateRange]);
+
+  const handleStationSelect = async (station) => {
+    setSelectedStation(station);
     
-    // Mesafe hesaplama
-    const distance = userLocation ? calculateDistance(
-      userLocation.lat,
-      userLocation.lng,
-      station.latitude,
-      station.longitude
-    ) : 0;
+    if (!userLocation) return;
 
-    // Enerji hesaplamaları
-    const consumption = calculateEnergyConsumption(distance);
-    const cost = calculateEnergyCost(consumption);
-    const remainingCharge = calculateRemainingCharge(consumption);
-    const isLowBattery = remainingCharge < 20;
+    try {
+      const response = await fetch(`${API_BASE_URL}/stations/distance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lat1: userLocation.lat,
+          lon1: userLocation.lng,
+          lat2: station.latitude,
+          lon2: station.longitude,
+        }),
+      });
 
-    // Varış zamanı hesaplama
-    const arrival = calculateArrivalTime(distance);
+      if (!response.ok) {
+        throw new Error('Mesafe hesaplanamadı');
+      }
+
+      const data = await response.json();
+      setSelectedStation(prev => ({
+        ...prev,
+        routeDetails: {
+          ...prev.routeDetails,
+          realDistance: data.distance.toFixed(1),
+          realDuration: Math.round(data.duration / 60),
+        }
+      }));
+    } catch (error) {
+      console.error('Error:', error);
+    }
+  };
+
+  const updateStationStats = useCallback(async (stationId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/stations/${stationId}/stats`);
+      const stats = await response.json();
+      
+      setStations(prevStations => 
+        prevStations.map(station => 
+          station.id === stationId 
+            ? { 
+                ...station, 
+                averageRating: stats.averageRating,
+                reviewCount: stats.reviewCount 
+              }
+            : station
+        )
+      );
+
+      setFilteredStations(prevStations => 
+        prevStations.map(station => 
+          station.id === stationId 
+            ? { 
+                ...station, 
+                averageRating: stats.averageRating,
+                reviewCount: stats.reviewCount 
+              }
+            : station
+        )
+      );
+    } catch (error) {
+      console.error('İstasyon istatistikleri güncellenemedi:', error);
+    }
+  }, []);
+
+  const ReviewSection = ({ station, setSnackbar }) => {
+    const [rating, setRating] = useState(0);
+    const [comment, setComment] = useState('');
+    const [reviews, setReviews] = useState([]);
+    const [showReviews, setShowReviews] = useState(false);
+    const [page, setPage] = useState(0);
+    const [isLoading, setIsLoading] = useState(false);
+    const reviewsPerPage = 5;
+
+    const loadReviews = useCallback(async () => {
+      setIsLoading(true);
+      try {
+        const data = await getStationReviews(station.id);
+        // En yeni yorumlar başta olacak şekilde sırala
+        const sortedReviews = data ? data.sort((a, b) => 
+          new Date(b.createdAt) - new Date(a.createdAt)
+        ) : [];
+        setReviews(sortedReviews);
+      } catch (error) {
+        console.error('Yorumlar yüklenirken hata:', error);
+        setSnackbar({
+          open: true,
+          message: 'Yorumlar yüklenirken bir hata oluştu',
+          severity: 'error'
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    }, [station.id, setSnackbar]);
+
+    const handleSubmitReview = async () => {
+      if (!rating) {
+        setSnackbar({
+          open: true,
+          message: 'Lütfen bir puan verin',
+          severity: 'warning'
+        });
+        return;
+      }
+
+      setIsLoading(true);
+      try {
+        const newReview = await submitReview(station.id, { rating, comment });
+        
+        // Yeni yorumu listeye ekle ve en başa yerleştir
+        setReviews(prevReviews => [newReview, ...prevReviews]);
+        
+        // İstasyon istatistiklerini güncelle
+        const newTotalRating = (station.averageRating * station.reviewCount + rating);
+        const newCount = station.reviewCount + 1;
+        const newAverage = newTotalRating / newCount;
+        
+        // Station objesini güncelle
+        station.averageRating = newAverage;
+        station.reviewCount = newCount;
+
+        // Formu temizle
+        setRating(0);
+        setComment('');
+        
+        // Yorumları göster
+        setShowReviews(true);
+        // İlk sayfaya dön
+        setPage(0);
+
+        setSnackbar({
+          open: true,
+          message: 'Yorumunuz başarıyla gönderildi',
+          severity: 'success'
+        });
+      } catch (error) {
+        console.error('Yorum gönderilirken hata:', error);
+        setSnackbar({
+          open: true,
+          message: 'Yorum gönderilirken bir hata oluştu',
+          severity: 'error'
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    useEffect(() => {
+      if (showReviews) {
+        loadReviews();
+      }
+    }, [loadReviews, showReviews]);
 
     return (
-      <Box
+      <Box sx={{ 
+        borderTop: 1, 
+        borderColor: 'divider',
+        bgcolor: 'background.paper',
+        borderRadius: '0 0 4px 4px',
+        overflow: 'hidden'
+      }}>
+        {/* Özet Başlık */}
+        <Box sx={{ 
+          p: { xs: 1, sm: 1.5 },
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'space-between',
+          bgcolor: 'background.default',
+          borderBottom: 1,
+          borderColor: 'divider'
+        }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Box sx={{ 
+              width: { xs: 32, sm: 36 },
+              height: { xs: 32, sm: 36 },
+              borderRadius: '50%', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center',
+              bgcolor: theme.palette.primary.main,
+              color: 'white'
+            }}>
+              <Typography sx={{ 
+                fontSize: { xs: '0.9rem', sm: '1.1rem' }
+              }}>
+                {station.averageRating ? station.averageRating.toFixed(1) : '0'}
+              </Typography>
+            </Box>
+            <Box>
+              <Rating 
+                value={station.averageRating || 0} 
+                precision={0.1} 
+                readOnly 
+                size="small"
+              />
+              <Typography variant="caption" color="text.secondary">
+                {station.reviewCount || 0} değerlendirme
+              </Typography>
+            </Box>
+          </Box>
+          <Button 
+            variant="outlined"
+            size="small"
+            onClick={() => setShowReviews(!showReviews)}
+            endIcon={showReviews ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
         sx={{
-          p: 1.5,
-          mb: 1,
-          borderRadius: 2,
-          bgcolor: theme.palette.mode === 'dark' ? 'rgba(24,28,33,0.8)' : 'rgba(255,255,255,0.9)',
-          backdropFilter: 'blur(8px)',
-          border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)'}`,
-          boxShadow: '0 2px 12px rgba(0,0,0,0.1)',
-          cursor: 'pointer',
-          transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-          '&:hover': {
-            transform: 'translateY(-2px)',
-            boxShadow: '0 4px 15px rgba(0,0,0,0.15)'
-          }
-        }}
-        onClick={(e) => handleOpenDetails(station, e)}
-      >
-        {/* Üst Kısım */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1, alignItems: 'center' }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600, fontSize: '0.9rem' }}>
-            {station.name}
-          </Typography>
-          <StationStatusChip station={station} />
+              fontSize: '0.75rem',
+              py: 0.5,
+              minWidth: 'auto'
+            }}
+          >
+            {showReviews ? 'Gizle' : 'Yorumlar'}
+          </Button>
         </Box>
 
-        {/* İstatistikler */}
+        {showReviews && (
+          <Box sx={{ p: { xs: 1, sm: 1.5 } }}>
+            {/* Yorum Formu */}
+            <Paper elevation={0} sx={{ 
+              p: { xs: 1, sm: 1.5 },
+              mb: 2, 
+              bgcolor: 'background.default',
+              border: 1,
+              borderColor: 'divider',
+              borderRadius: 1
+            }}>
+              <Typography sx={{ 
+          mb: 1,
+                fontSize: '0.875rem',
+                fontWeight: 500
+              }}>
+                Değerlendirmenizi Yazın
+              </Typography>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Rating
+                    value={rating}
+                    onChange={(e, newValue) => setRating(newValue)}
+                    size="small"
+                    sx={{ color: theme.palette.primary.main }}
+                  />
+                  <Typography variant="caption" color="text.secondary">
+                    {rating ? `${rating} yıldız` : 'Puan verin'}
+                  </Typography>
+                </Box>
+                <TextField
+                  fullWidth
+                  multiline
+                  rows={2}
+                  placeholder="Deneyiminizi paylaşın..."
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  variant="outlined"
+                  size="small"
+                  sx={{
+                    '& .MuiOutlinedInput-root': {
+                      fontSize: '0.875rem'
+                    }
+                  }}
+                />
+                <Button 
+                  variant="contained" 
+                  onClick={handleSubmitReview}
+                  disabled={!rating || isLoading}
+                  size="small"
+                  sx={{ 
+                    alignSelf: 'flex-end',
+                    minWidth: 90,
+                    fontSize: '0.75rem',
+                    py: 0.5
+                  }}
+                >
+                  {isLoading ? (
+                    <CircularProgress size={16} color="inherit" />
+                  ) : (
+                    'Gönder'
+                  )}
+                </Button>
+        </Box>
+            </Paper>
+
+            {/* Yorum Listesi */}
+            <Box>
+              <Typography sx={{ 
+                mb: 1,
+                fontSize: '0.875rem',
+                fontWeight: 500
+              }}>
+                Değerlendirmeler
+              </Typography>
         <Box sx={{ 
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr 1fr 1fr',
-          gap: 1,
-          p: 1,
-          my: 1,
+                maxHeight: 250,
+                overflow: 'auto',
+                pr: 1,
+                mr: -1
+              }}>
+                {reviews.slice(page * reviewsPerPage, (page + 1) * reviewsPerPage).map(review => (
+                  <Paper
+                    key={review.id}
+                    elevation={0}
+                    sx={{ 
+                      p: 1,
+                      mb: 1,
+                      bgcolor: 'background.default',
+                      border: 1,
+                      borderColor: 'divider',
           borderRadius: 1,
-          bgcolor: theme.palette.mode === 'dark' ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)',
-          border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'}`,
-        }}>
-          {/* Mesafe */}
-          <Box sx={{ textAlign: 'center' }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
-              <DirectionsIcon sx={{ fontSize: '1rem', color: theme.palette.primary.main, mr: 0.5 }} />
-              <Typography variant="caption" color="text.secondary">Mesafe</Typography>
+                      '&:last-child': { mb: 0 }
+                    }}
+                  >
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                      <Rating value={review.rating} size="small" readOnly />
+                      <Typography variant="caption" color="text.secondary">
+                        {new Date(review.createdAt).toLocaleDateString('tr-TR', {
+                          year: 'numeric',
+                          month: 'long',
+                          day: 'numeric'
+                        })}
+                      </Typography>
+                    </Box>
+                    <Typography variant="caption" sx={{ whiteSpace: 'pre-wrap' }}>
+                      {review.comment}
+                    </Typography>
+                  </Paper>
+                ))}
+              </Box>
+
+              {/* Sayfalama */}
+              {Math.ceil(reviews.length / reviewsPerPage) > 1 && (
+                <Box sx={{ 
+                  display: 'flex', 
+                  justifyContent: 'center', 
+                  mt: 1.5,
+                  gap: 1 
+                }}>
+                  <Button 
+                    variant="outlined"
+                    size="small"
+                    disabled={page === 0}
+                    onClick={() => setPage(prev => prev - 1)}
+                    sx={{ minWidth: 'auto', px: 1, py: 0.5 }}
+                  >
+                    <KeyboardArrowUpIcon fontSize="small" />
+                  </Button>
+                  <Typography variant="caption" sx={{ 
+                    alignSelf: 'center',
+                    px: 1,
+                    py: 0.5,
+                    borderRadius: 0.5,
+                    bgcolor: 'background.paper',
+                    border: 1,
+                    borderColor: 'divider'
+                  }}>
+                    {page + 1} / {Math.ceil(reviews.length / reviewsPerPage)}
+                  </Typography>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    disabled={page === Math.ceil(reviews.length / reviewsPerPage) - 1}
+                    onClick={() => setPage(prev => prev + 1)}
+                    sx={{ minWidth: 'auto', px: 1, py: 0.5 }}
+                  >
+                    <KeyboardArrowDownIcon fontSize="small" />
+                  </Button>
             </Box>
-            <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.primary.main }}>
-              {distance.toFixed(1)} km
+              )}
+            </Box>
+          </Box>
+        )}
+      </Box>
+    );
+  };
+
+  const StationInfo = ({ station, setSnackbar }) => {
+    const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+    
+    const openGoogleMaps = () => {
+      if (!userLocation) return;
+      
+      const url = `https://www.google.com/maps/dir/?api=1&origin=${userLocation.lat},${userLocation.lng}&destination=${station.latitude},${station.longitude}&travelmode=driving`;
+      window.open(url, '_blank');
+    };
+
+    return (
+      <Box sx={{ 
+        bgcolor: 'background.paper',
+          borderRadius: 2,
+        width: isMobile ? '280px' : '320px',
+        overflow: 'hidden'
+      }}>
+        {/* Başlık */}
+        <Box sx={{ 
+          p: isMobile ? 1.5 : 2, 
+          pb: isMobile ? 0.5 : 1
+        }}>
+          <Typography variant="h6" sx={{ 
+            mb: 0.5,
+            fontSize: isMobile ? '1rem' : '1.25rem',
+            wordBreak: 'break-word'
+          }}>
+            {station.name}
+          </Typography>
+          
+          {/* Soket durumları */}
+          <Box sx={{ 
+            display: 'flex', 
+            flexWrap: 'wrap',
+            gap: 1, 
+            mt: 1,
+            '& > div': {
+              px: 1.5,
+              py: 0.5,
+              borderRadius: 2,
+              color: '#fff',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.5,
+              fontSize: isMobile ? '0.75rem' : '0.875rem'
+            }
+          }}>
+            {station.available_dc > 0 && (
+              <Box sx={{ bgcolor: 'success.main' }}>
+                <EvStationIcon sx={{ fontSize: isMobile ? 16 : 18 }} />
+                <Typography variant="caption" sx={{ fontWeight: 'medium' }}>
+                  {station.available_dc}/{station.connector_count} DC Müsait
             </Typography>
+              </Box>
+            )}
+            {station.available_ac > 0 && (
+              <Box sx={{ bgcolor: 'info.main' }}>
+                <EvStationIcon sx={{ fontSize: isMobile ? 16 : 18 }} />
+                <Typography variant="caption" sx={{ fontWeight: 'medium' }}>
+                  {station.available_ac} AC Müsait
+                </Typography>
+              </Box>
+            )}
+          </Box>
           </Box>
 
-          {/* Varış Zamanı (Yeni) */}
-          <Box sx={{ textAlign: 'center', borderLeft: 1, borderColor: 'divider' }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
-              <AccessTimeIcon sx={{ fontSize: '1rem', color: theme.palette.grey[500], mr: 0.5 }} />
-              <Typography variant="caption" color="text.secondary">Varış</Typography>
-            </Box>
-            <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.grey[600] }}>
-              {arrival.time}
-              <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', fontSize: '0.7rem' }}>
-                {arrival.duration} dk
+        {/* Detay bilgileri */}
+        <Box sx={{ 
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, 1fr)',
+          borderTop: 1,
+          borderColor: 'divider',
+          p: 1.5,
+          gap: 0,
+          '& > div': {
+            borderRight: 1,
+            borderColor: 'divider',
+            '&:last-child': {
+              borderRight: 0
+            }
+          }
+        }}>
+          {/* Mesafe */}
+          <Box sx={{ textAlign: 'center', px: 1 }}>
+            <Box sx={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'center',
+              gap: 0.5 
+            }}>
+              <DirectionsIcon 
+                sx={{ 
+                  color: 'primary.main',
+                  fontSize: 20
+                }} 
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500 }}>
+                Mesafe
               </Typography>
+              <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
+                {station.routeDetails?.realDistance || station.routeDetails?.distance} km
+              </Typography>
+            </Box>
+          </Box>
+
+          {/* Varış */}
+          <Box sx={{ textAlign: 'center', px: 1 }}>
+            <Box sx={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'center',
+              gap: 0.5 
+            }}>
+              <TimerIcon 
+                sx={{ 
+                  color: 'warning.main',
+                  fontSize: 20
+                }} 
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500 }}>
+                Varış
+              </Typography>
+              <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
+                {station.routeDetails?.realDuration || station.routeDetails?.duration} dk
             </Typography>
+            </Box>
           </Box>
 
           {/* Tüketim */}
-          <Box sx={{ textAlign: 'center', borderLeft: 1, borderRight: 1, borderColor: 'divider' }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
-              <ElectricBoltIcon sx={{ fontSize: '1rem', color: theme.palette.info.main, mr: 0.5 }} />
-              <Typography variant="caption" color="text.secondary">Tüketim</Typography>
-            </Box>
-            <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.info.main }}>
-              {consumption.toFixed(1)} kWh
-              <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', fontSize: '0.7rem' }}>
-                ≈ {cost.toFixed(0)} TL
+          <Box sx={{ textAlign: 'center', px: 1 }}>
+            <Box sx={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'center',
+              gap: 0.5 
+            }}>
+              <BoltIcon 
+                sx={{ 
+                  color: 'error.main',
+                  fontSize: 20
+                }} 
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500 }}>
+                Tüketim
               </Typography>
+              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.25 }}>
+                <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
+                  {station.routeDetails?.consumption} kWh
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
+                  ≈ {(station.routeDetails?.consumption * electricityPrice).toFixed(1)} TL
             </Typography>
+              </Box>
+            </Box>
           </Box>
 
           {/* Varış Şarjı */}
-          <Box sx={{ textAlign: 'center' }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
-              <BatteryChargingFullIcon sx={{ 
-                fontSize: '1rem', 
-                color: isLowBattery ? theme.palette.error.main : theme.palette.success.main,
-                mr: 0.5 
-              }} />
-              <Typography variant="caption" color="text.secondary">Varış Şarjı</Typography>
-            </Box>
-            <Typography variant="body2" sx={{ 
-              fontWeight: 600,
-              color: isLowBattery ? theme.palette.error.main : theme.palette.success.main
+          <Box sx={{ textAlign: 'center', px: 1 }}>
+            <Box sx={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'center',
+              gap: 0.5 
             }}>
-              {Math.max(remainingCharge, 0).toFixed(1)}%
+              <BatteryChargingFullIcon 
+                sx={{ 
+                  color: 'success.main',
+                  fontSize: 20,
+                  transform: 'rotate(90deg)'
+                }} 
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500 }}>
+                Varış Şarjı
+              </Typography>
+              <Typography variant="body2" color="success.main" sx={{ fontWeight: 'medium' }}>
+                {batteryLevel - ((station.routeDetails?.consumption / batteryCapacity) * 100).toFixed(1)}%
             </Typography>
+            </Box>
           </Box>
         </Box>
 
-        {/* Alt Kısım - Butonlar */}
-        <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
-          <Button
+        {/* Google Maps butonu */}
+        <Box 
+          onClick={openGoogleMaps}
+            sx={{ 
+            p: 1, 
+            borderTop: 1, 
+            borderColor: 'divider',
+            bgcolor: 'primary.main',
+            color: 'white',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 0.5,
+            cursor: 'pointer',
+            transition: 'all 0.2s',
+            fontSize: '0.75rem',
+              '&:hover': {
+              bgcolor: 'primary.dark',
+              '& .google-icon': {
+                transform: 'translateX(2px)'
+              }
+            }
+          }}
+        >
+          <DirectionsIcon sx={{ fontSize: 16 }} />
+          <Typography sx={{ 
+            fontSize: 'inherit',
+            fontWeight: 'medium',
+            letterSpacing: '0.5px'
+          }}>
+            GOOGLE MAPS
+          </Typography>
+          <Box sx={{ 
+            display: 'flex',
+            transition: 'transform 0.2s',
+          }} className="google-icon">
+            <GoogleIcon sx={{ fontSize: 14 }} />
+        </Box>
+        </Box>
+
+        {/* Yorum bölümü */}
+        <ReviewSection 
+          station={station} 
+          setSnackbar={setSnackbar}
+        />
+      </Box>
+    );
+  };
+
+  const VehicleSettingsDialog = useMemo(() => () => (
+    <Dialog
+      open={showSettings}
+      onClose={() => setShowSettings(false)}
+      maxWidth="xs"
+      fullWidth
+      PaperProps={{
+        sx: {
+          borderRadius: 2,
+          maxWidth: { xs: '90%', sm: 400 }
+        }
+      }}
+    >
+      <DialogTitle sx={{ 
+        pb: 1,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1 
+      }}>
+        <ElectricCarIcon color="primary" />
+        <Typography variant="h6">Araç Bilgileri</Typography>
+      </DialogTitle>
+      <DialogContent dividers>
+        <Box sx={{ py: 1 }}>
+          {/* Menzil Bilgisi */}
+          <Box sx={{ mb: 2, p: 1.5, bgcolor: 'background.default', borderRadius: 1 }}>
+            <Typography variant="subtitle2" color="primary" gutterBottom>
+              Mevcut Menzil
+            </Typography>
+            <Typography variant="h4" sx={{ mb: 1 }}>
+              {calculateRange()} km
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {batteryCapacity * (batteryLevel / 100)} kWh kullanılabilir
+            </Typography>
+          </Box>
+
+          {/* Batarya Seviyesi */}
+          <Typography variant="subtitle2" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <BatteryChargingFullIcon fontSize="small" />
+            Batarya Seviyesi: {batteryLevel}%
+          </Typography>
+          <Slider
+            value={batteryLevel}
+            onChange={(e, newValue) => setBatteryLevel(newValue)}
+            min={0}
+            max={100}
+            valueLabelDisplay="auto"
+            sx={{ mb: 3 }}
+          />
+
+          {/* Diğer Ayarlar */}
+          <TextField
             fullWidth
-            variant="contained"
+            label="Batarya Kapasitesi"
+            type="number"
+            value={batteryCapacity}
+            onChange={(e) => setBatteryCapacity(Number(e.target.value))}
+            InputProps={{
+              startAdornment: <BoltIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} />,
+              endAdornment: <InputAdornment position="end">kWh</InputAdornment>
+            }}
+            sx={{ mb: 2 }}
+            size="small"
+          />
+
+          <TextField
+            fullWidth
+            label="Ortalama Tüketim"
+            type="number"
+            value={averageConsumption}
+            onChange={(e) => setAverageConsumption(Number(e.target.value))}
+            InputProps={{
+              startAdornment: <LocalGasStationIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} />,
+              endAdornment: <InputAdornment position="end">kWh/100km</InputAdornment>
+            }}
+            sx={{ mb: 2 }}
+            size="small"
+          />
+
+          <TextField
+            fullWidth
+            label="Elektrik Birim Fiyatı"
+            type="number"
+            value={electricityPrice}
+            onChange={(e) => setElectricityPrice(Number(e.target.value))}
+            InputProps={{
+              startAdornment: <PercentIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} />,
+              endAdornment: <InputAdornment position="end">TL/kWh</InputAdornment>
+            }}
+            size="small"
+          />
+        </Box>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, py: 2 }}>
+        <Button 
+          onClick={() => setShowSettings(false)}
+          variant="contained"
+          fullWidth
+        >
+          Tamam
+        </Button>
+      </DialogActions>
+    </Dialog>
+  ), [showSettings, batteryLevel, batteryCapacity, averageConsumption, electricityPrice, calculateRange]);
+
+  const StationTableRow = ({ station, index, onSelect }) => {
+    const [realDetails, setRealDetails] = useState(null);
+    const theme = useTheme();
+
+    // İstasyon seçildiğinde veya tablo ilk yüklendiğinde gerçek mesafeyi hesapla
+    useEffect(() => {
+      const fetchRealDistance = async () => {
+        if (!userLocation) return;
+
+        try {
+          const response = await fetch(`${API_BASE_URL}/stations/distance`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              lat1: userLocation.lat,
+              lon1: userLocation.lng,
+              lat2: station.latitude,
+              lon2: station.longitude,
+            }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            setRealDetails({
+              distance: data.distance.toFixed(1),
+              duration: Math.round(data.duration / 60),
+              consumption: ((data.distance * averageConsumption) / 100).toFixed(1)
+            });
+          }
+        } catch (error) {
+          console.error('Error:', error);
+        }
+      };
+
+      fetchRealDistance();
+    }, [station, userLocation]);
+
+    return (
+      <TableRow
+        hover
+        selected={selectedStation?.id === station.id}
+        onClick={() => onSelect(station)}
+        sx={{ 
+          cursor: 'pointer',
+          '&.Mui-selected': {
+            bgcolor: `${theme.palette.primary.main}15 !important`
+          },
+          opacity: station.routeDetails?.isReachable ? 1 : 0.5
+        }}
+      >
+        <TableCell>{index + 1}</TableCell>
+        <TableCell>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Box
+              sx={{
+                width: 32,
+                height: 32,
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                bgcolor: `${getStatusColor(station)}15`,
+                color: getStatusColor(station),
+              }}
+            >
+              <EvStationIcon />
+            </Box>
+            <Box>
+              <Typography variant="body2">{station.name}</Typography>
+              <Typography variant="caption" color="textSecondary">
+                {getStatusText(station)}
+              </Typography>
+            </Box>
+          </Box>
+        </TableCell>
+        <TableCell align="center">
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+            <Typography variant="body2">
+              DC: {station.available_dc}/{station.connector_count}
+            </Typography>
+            <Typography variant="body2">
+              AC: {station.available_ac}
+            </Typography>
+          </Box>
+        </TableCell>
+        <TableCell align="center">
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+            <Typography variant="body2">
+              {realDetails?.distance || station.routeDetails?.distance} km
+            </Typography>
+            {realDetails && realDetails.distance !== station.routeDetails?.distance && (
+              <Typography variant="caption" color="textSecondary">
+                Kuş uçuşu: {station.routeDetails?.distance} km
+              </Typography>
+            )}
+          </Box>
+        </TableCell>
+        <TableCell align="center">
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+            <Typography variant="body2">
+              {realDetails?.duration || station.routeDetails?.duration} dk
+            </Typography>
+            {realDetails && realDetails.duration !== station.routeDetails?.duration && (
+              <Typography variant="caption" color="textSecondary">
+                Tahmini: {station.routeDetails?.duration} dk
+              </Typography>
+            )}
+          </Box>
+        </TableCell>
+        <TableCell align="center">
+          <Box sx={{ 
+            display: 'flex', 
+            flexDirection: 'column', 
+            alignItems: 'center',
+            color: station.routeDetails?.isReachable ? 'inherit' : 'error.main'
+          }}>
+            <Typography variant="body2">
+              {realDetails?.consumption || station.routeDetails?.consumption} kWh
+            </Typography>
+            {!station.routeDetails?.isReachable && (
+              <Typography variant="caption" color="error">
+                Menzil Dışında
+              </Typography>
+            )}
+          </Box>
+        </TableCell>
+        <TableCell align="right">
+          <IconButton
             size="small"
             onClick={(e) => {
               e.stopPropagation();
               showRoute(station);
             }}
-            startIcon={<DirectionsIcon sx={{ fontSize: '1rem' }} />}
-            sx={{ py: 0.5, fontSize: '0.8rem' }}
+            sx={{ color: theme.palette.primary.main }}
           >
-            Rota
-          </Button>
-          <IconButton
-            size="small"
-            onClick={(e) => {
-              e.stopPropagation();
-              openInGoogleMaps(station);
-            }}
-            sx={{ 
-              color: '#4285F4',
-              bgcolor: theme.palette.mode === 'dark' ? 'rgba(66,133,244,0.1)' : 'rgba(66,133,244,0.05)',
-              '&:hover': {
-                bgcolor: theme.palette.mode === 'dark' ? 'rgba(66,133,244,0.2)' : 'rgba(66,133,244,0.1)',
-              }
-            }}
-          >
-            <GoogleIcon sx={{ fontSize: '1.2rem' }} />
+            <DirectionsIcon fontSize="small" />
           </IconButton>
-        </Box>
-      </Box>
+        </TableCell>
+      </TableRow>
     );
   };
 
-  // Mouse/Touch olayları için yeni fonksiyonlar
-  const handleStart = (e) => {
-    setIsDragging(true);
-    const clientY = e.type === 'mousedown' ? e.clientY : e.touches[0].clientY;
-    setStartY(clientY);
-    setCurrentY(clientY);
-  };
-
-  const handleMove = (e) => {
-    if (!isDragging) return;
-    e.preventDefault();
-    
-    const clientY = e.type === 'mousemove' ? e.clientY : e.touches[0].clientY;
-    setCurrentY(clientY);
-    
-    const deltaY = clientY - startY;
-    const screenHeight = window.innerHeight;
-    const currentHeight = screenHeight * (parseInt(panelHeight) / 100);
-    
-    let newHeight;
-    if (deltaY > 0) {
-      // Aşağı çekme
-      newHeight = Math.max(0, screenHeight - currentHeight - deltaY);
-    } else {
-      // Yukarı çekme
-      newHeight = Math.min(screenHeight * 0.8, screenHeight - currentHeight - deltaY);
-    }
-    
-    const newHeightVh = (newHeight / screenHeight) * 100;
-    setPanelHeight(`${newHeightVh}vh`);
-  };
-
-  const handleEnd = () => {
-    if (!isDragging) return;
-    
-    setIsDragging(false);
-    const deltaY = currentY - startY;
-    const threshold = window.innerHeight * 0.2; // 20% eşik değeri
-    
-    if (deltaY > threshold) {
-      setPanelHeight(PANEL_STATES.CLOSED);
-    } else if (deltaY < -threshold) {
-      setPanelHeight(PANEL_STATES.FULL);
-    } else {
-      setPanelHeight(PANEL_STATES.HALF);
-    }
-  };
-
-  // Panel stillerini güncelle
-  const panelStyles = {
-    position: 'fixed',
-    bottom: panelHeight === PANEL_STATES.CLOSED ? '-100vh' : 0,
-    left: 0,
-    right: 0,
-    height: panelHeight === PANEL_STATES.CLOSED ? '40vh' : panelHeight,
-    borderRadius: '16px 16px 0 0',
-    zIndex: 1000,
-    bgcolor: 'background.paper',
-    overflow: 'hidden',
-    transition: isDragging ? 'none' : 'all 0.3s ease-in-out',
-    pb: 'env(safe-area-inset-bottom)',
-    display: 'flex',
-    flexDirection: 'column',
-    touchAction: 'none',
-    boxShadow: '0px -2px 10px rgba(0,0,0,0.1)',
-    userSelect: 'none', // Metin seçimini engelle
-  };
-
-  // Panel kapalıyken görünecek handle
-  const handleStyles = {
-    position: 'fixed',
-    bottom: panelHeight === PANEL_STATES.CLOSED ? 0 : 'auto',
-    left: 0,
-    right: 0,
-    height: '24px',
-    backgroundColor: theme.palette.mode === 'dark' ? 'rgba(24,28,33,0.8)' : 'rgba(255,255,255,0.9)',
-    borderRadius: '16px 16px 0 0',
-    zIndex: 999,
-    display: panelHeight === PANEL_STATES.CLOSED ? 'flex' : 'none',
-    justifyContent: 'center',
-    alignItems: 'center',
-    cursor: 'grab',
-    boxShadow: '0px -2px 10px rgba(0,0,0,0.1)',
-    backdropFilter: 'blur(8px)',
-    border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)'}`,
-  };
-
-  return (
-    <Box sx={{ 
-      height: '100vh', 
-      width: '100%', 
-      position: 'relative',
-      bgcolor: theme.palette.background.default
-    }}>
-      <MapContainer
-        ref={mapRef}
-        center={[39.925533, 32.866287]}
-        zoom={13}
-        style={{ height: '100%', width: '100%' }}
-        zoomControl={false}
-      >
-        <TileLayer
-          url={mapStyle}
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-        />
-        <LocationMarker onLocationFound={setUserLocation} />
-        
-        {routeCoordinates && (
-          <Polyline
-            positions={routeCoordinates}
-            color={theme.palette.primary.main}
-            weight={4}
-            opacity={0.7}
-          />
-        )}
-
-        {filteredStations.map(station => (
-          <Marker
-            key={station.id}
-            position={[station.latitude, station.longitude]}
-            icon={getStationIcon(station)}
-          >
-            <Popup>
-              <StationCard
-                station={station}
-                userLocation={userLocation}
-                onRoute={() => showRoute(station)}
-                onNavigate={() => openInGoogleMaps(station)}
-                vehicleSettings={vehicleSettings}
-              />
-            </Popup>
-          </Marker>
-        ))}
-      </MapContainer>
-
-      {/* Sağ üst butonlar */}
-      <Box sx={{ 
-        position: 'fixed', 
-        top: 16, 
-        right: 16, 
-        zIndex: 1001,
-        display: 'flex',
-        gap: 1
-      }}>
-        {/* Konumuma Git butonu */}
-        <Fab
-          color="primary"
-          size="small"
-          sx={{
-            position: 'fixed',
-            top: 144,
-            right: 16,
-            zIndex: 1001,
-          }}
-          onClick={goToMyLocation}
-        >
-          <MyLocationIcon />
-        </Fab>
-
-        {/* Filtre Butonu */}
-        <Fab
-          color="primary"
-          size="small"
-          sx={{
-            position: 'fixed',
-            top: 80,
-            right: 16,
-            zIndex: 1001,
-          }}
-          onClick={() => setShowFilters(!showFilters)}
-        >
-          <FilterAltIcon />
-        </Fab>
-
-        {/* Ayarlar Butonu */}
-        <Fab
-          color="primary"
-          size="small"
-          onClick={() => setShowSettings(true)}
-        >
-          <SettingsIcon />
-        </Fab>
-      </Box>
-
-      {/* Filtre Paneli */}
+  const StationsTable = () => (
+    <Collapse in={showTable}>
       <Paper
-        elevation={3}
         sx={{
           position: 'fixed',
-          top: showFilters ? 140 : -200,
-          right: 16,
-          zIndex: 1001,
-          p: 2,
-          borderRadius: 2,
-          transition: 'top 0.3s ease-in-out',
-          width: 280,
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: isMobile ? '60vh' : '50vh',
+          bgcolor: 'background.paper',
+          borderTopLeftRadius: 16,
+          borderTopRightRadius: 16,
+          overflow: 'hidden',
+          boxShadow: 3,
+          zIndex: 1000,
         }}
       >
-        <Typography variant="subtitle2" gutterBottom>
-          Filtreler
-        </Typography>
-        
-        <FormControlLabel
-          control={
-            <Switch
-              checked={filters.onlyAvailable}
-              onChange={(e) => setFilters(prev => ({
-                ...prev,
-                onlyAvailable: e.target.checked
-              }))}
-            />
-          }
-          label="Sadece Müsait Olanlar"
-          sx={{ mb: 1, display: 'block' }}
-        />
-
-        <Typography variant="body2" color="text.secondary" gutterBottom>
-          Şarj Tipi:
-        </Typography>
-        <ToggleButtonGroup
-          value={[
-            ...(filters.showDC ? ['dc'] : []),
-            ...(filters.showAC ? ['ac'] : [])
-          ]}
-          onChange={(e, newValues) => {
-            setFilters(prev => ({
-              ...prev,
-              showDC: newValues.includes('dc'),
-              showAC: newValues.includes('ac')
-            }));
-          }}
-          aria-label="şarj tipi"
-          size="small"
-          sx={{ mb: 1 }}
-        >
-          <ToggleButton value="dc">
-            <Tooltip title="DC Hızlı Şarj">
-              <Box sx={{ px: 1 }}>DC</Box>
-            </Tooltip>
-          </ToggleButton>
-          <ToggleButton value="ac">
-            <Tooltip title="AC Normal Şarj">
-              <Box sx={{ px: 1 }}>AC</Box>
-            </Tooltip>
-          </ToggleButton>
-        </ToggleButtonGroup>
-
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-          {filteredStations.length} istasyon gösteriliyor
-        </Typography>
-      </Paper>
-
-      {/* İstasyon Detayları Modal'ı */}
-      <Dialog
-        open={Boolean(selectedStationDetails)}
-        onClose={handleCloseDetails}
-        maxWidth="sm"
-        fullWidth
-        sx={{
-          '& .MuiDialog-paper': {
-            borderRadius: 2,
-            m: { xs: 1, sm: 2 }
-          }
-        }}
-      >
-        <DialogTitle sx={{ 
-          m: 0, 
-          p: 2,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center'
+        <Box sx={{ 
+          p: 1.5,
+          display: 'flex', 
+          flexDirection: 'column',
+          borderBottom: 1,
+          borderColor: 'divider',
+          bgcolor: 'background.paper'
         }}>
-          <Typography variant="h6">
-            İstasyon Detayları
-          </Typography>
-          <MuiIconButton
-            aria-label="close"
-            onClick={handleCloseDetails}
-            sx={{
-              color: 'text.secondary',
-              '&:hover': { color: 'text.primary' }
-            }}
-          >
-            <CloseIcon />
-          </MuiIconButton>
-        </DialogTitle>
-        <DialogContent dividers>
-          {selectedStationDetails && (
-            <StationCard
-              station={selectedStationDetails}
-              userLocation={userLocation}
-              onRoute={(e) => {
-                handleCloseDetails();
-                showRoute(selectedStationDetails);
-                if (window.innerWidth < 600) {
-                  setIsPanelOpen(false);
+          {/* Başlık - Ortada */}
+          <Box sx={{ 
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            gap: 1,
+            mb: 1
+          }}>
+            <EvStationIcon 
+              color="primary" 
+              sx={{ fontSize: 24 }}
+            />
+            <Typography variant="h6" sx={{ 
+              fontWeight: 600,
+              color: 'primary.main',
+              fontSize: '1.1rem'
+            }}>
+              En Yakın 10 İstasyon
+            </Typography>
+          </Box>
+
+          {/* Alt bilgiler - Sol alt */}
+          <Box sx={{ 
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}>
+            {/* Araç bilgileri */}
+            <Box sx={{ 
+              display: 'flex', 
+              gap: 2,
+              alignItems: 'center',
+              py: 0.25,
+              px: 1,
+              bgcolor: 'background.default',
+              borderRadius: 1,
+              boxShadow: 1,
+              fontSize: '0.75rem'
+            }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <BoltIcon color="warning" sx={{ fontSize: 16 }} />
+                <Typography variant="caption" fontWeight="medium">
+                  {averageConsumption} kWh/100km
+                </Typography>
+              </Box>
+
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <LocalGasStationIcon color="error" sx={{ fontSize: 16 }} />
+                <Typography variant="caption" fontWeight="medium">
+                  {electricityPrice} ₺/kWh
+                </Typography>
+              </Box>
+
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <BatteryChargingFullIcon color="success" sx={{ fontSize: 16 }} />
+                <Typography variant="caption" fontWeight="medium">
+                  {batteryLevel}% ({calculateRange()} km)
+                </Typography>
+              </Box>
+            </Box>
+
+            {/* Kapatma butonu */}
+            <IconButton 
+              onClick={() => setShowTable(false)}
+              size="small"
+              sx={{ 
+                bgcolor: 'background.default',
+                '&:hover': {
+                  bgcolor: 'action.hover'
                 }
               }}
-              onNavigate={() => {
-                handleCloseDetails();
-                openInGoogleMaps(selectedStationDetails);
-              }}
-              vehicleSettings={vehicleSettings}
-            />
-          )}
-        </DialogContent>
-        <DialogActions sx={{ p: 2 }}>
-          <Button
-            variant="outlined"
-            onClick={handleCloseDetails}
-            size="large"
-            fullWidth
-          >
-            Kapat
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Araç Ayarları Butonu */}
-      <Fab
-        color="primary"
-        size="small"
-        sx={{
-          position: 'fixed',
-          top: 16,
-          right: 16,
-          zIndex: 1001,
-        }}
-        onClick={() => setShowSettings(true)}
-      >
-        <SettingsIcon />
-      </Fab>
-
-      {/* Araç Ayarları Modal'ı */}
-      <Dialog
-        open={showSettings}
-        onClose={() => setShowSettings(false)}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>
-          Araç Ayarları
-        </DialogTitle>
-        <DialogContent dividers>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, py: 1 }}>
-            <TextField
-              label="Ortalama Tüketim"
-              type="number"
-              value={vehicleSettings.consumption}
-              onChange={(e) => setVehicleSettings(prev => ({
-                ...prev,
-                consumption: parseFloat(e.target.value) || 0
-              }))}
-              InputProps={{
-                endAdornment: <InputAdornment position="end">kWh/100km</InputAdornment>,
-              }}
-            />
-            <TextField
-              label="Elektrik Birim Fiyatı"
-              type="number"
-              value={vehicleSettings.pricePerKWh}
-              onChange={(e) => setVehicleSettings(prev => ({
-                ...prev,
-                pricePerKWh: parseFloat(e.target.value) || 0
-              }))}
-              InputProps={{
-                endAdornment: <InputAdornment position="end">TL/kWh</InputAdornment>,
-              }}
-            />
-            <TextField
-              label="Batarya Kapasitesi"
-              type="number"
-              value={vehicleSettings.batteryCapacity}
-              onChange={(e) => setVehicleSettings(prev => ({
-                ...prev,
-                batteryCapacity: parseFloat(e.target.value) || 0
-              }))}
-              InputProps={{
-                endAdornment: <InputAdornment position="end">kWh</InputAdornment>,
-              }}
-            />
-            <TextField
-              label="Mevcut Şarj Durumu"
-              type="number"
-              value={vehicleSettings.currentCharge}
-              onChange={(e) => setVehicleSettings(prev => ({
-                ...prev,
-                currentCharge: Math.min(Math.max(parseFloat(e.target.value) || 0, 0), 100)
-              }))}
-              InputProps={{
-                endAdornment: <InputAdornment position="end">%</InputAdornment>,
-              }}
-            />
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setShowSettings(false)}>Kapat</Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Panel açma handle'ı */}
-      <Box
-        sx={handleStyles}
-        onTouchStart={handleStart}
-        onTouchMove={handleMove}
-        onTouchEnd={handleEnd}
-        onMouseDown={handleStart}
-        onMouseMove={handleMove}
-        onMouseUp={handleEnd}
-        onMouseLeave={handleEnd}
-      >
-        <Box
-          sx={{
-            width: '40px',
-            height: '4px',
-            backgroundColor: theme.palette.mode === 'dark' 
-              ? 'rgba(255,255,255,0.2)' 
-              : 'rgba(0,0,0,0.2)',
-            borderRadius: '2px',
-          }}
-        />
-      </Box>
-
-      {/* Panel */}
-      <Paper
-        ref={panelRef}
-        elevation={3}
-        sx={panelStyles}
-        onTouchStart={handleStart}
-        onTouchMove={handleMove}
-        onTouchEnd={handleEnd}
-        onMouseDown={handleStart}
-        onMouseMove={handleMove}
-        onMouseUp={handleEnd}
-        onMouseLeave={handleEnd}
-      >
-        {/* Sürükleme göstergesi */}
-        <Box
-          sx={{
-            width: '40px',
-            height: '4px',
-            backgroundColor: theme.palette.mode === 'dark' 
-              ? 'rgba(255,255,255,0.2)' 
-              : 'rgba(0,0,0,0.2)',
-            borderRadius: '2px',
-            margin: '8px auto',
-            cursor: 'grab',
-            '&:active': {
-              cursor: 'grabbing'
-            }
-          }}
-        />
-
-        {/* Sabit başlık */}
-        <Box
-          sx={{
-            position: 'sticky',
-            top: 0,
-            bgcolor: theme.palette.mode === 'dark' ? 'rgba(24,28,33,0.95)' : 'rgba(255,255,255,0.95)',
-            backdropFilter: 'blur(12px)',
-            borderBottom: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)'}`,
-            px: 2,
-            pt: 0.5,
-            pb: 0.5,
-            zIndex: 1,
-            boxShadow: theme.palette.mode === 'dark' 
-              ? '0 4px 12px rgba(0,0,0,0.3)'
-              : '0 4px 12px rgba(0,0,0,0.05)',
-          }}
-        >
-          {/* Başlık */}
-          <Typography 
-            variant="h6" 
-            sx={{ 
-              textAlign: 'center',
-              fontSize: '0.85rem',
-              fontWeight: 600,
-              letterSpacing: '0.5px',
-              mb: 0.25,
-              background: theme.palette.mode === 'dark'
-                ? 'linear-gradient(45deg, #90caf9, #64b5f6)'
-                : 'linear-gradient(45deg, #1976d2, #2196f3)',
-              backgroundClip: 'text',
-              WebkitBackgroundClip: 'text',
-              color: 'transparent',
-            }}
-          >
-            En Yakın {filteredNearbyStations.length} İstasyon
-          </Typography>
-
-          {/* Bilgi Satırları */}
-          <Box 
-            sx={{ 
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              gap: 3,
-              mt: 0.25,
-            }}
-          >
-            {/* Tüketim Bilgisi */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-              <ElectricBoltIcon sx={{ fontSize: '0.8rem', color: theme.palette.info.main }} />
-              <Typography variant="caption" sx={{ fontSize: '0.6rem', color: 'text.secondary' }}>
-                {vehicleSettings.consumption} kWh/100km
-              </Typography>
-            </Box>
-
-            {/* Fiyat Bilgisi */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-              <BoltIcon sx={{ fontSize: '0.8rem', color: theme.palette.warning.main }} />
-              <Typography variant="caption" sx={{ fontSize: '0.6rem', color: 'text.secondary' }}>
-                {vehicleSettings.pricePerKWh} TL/kWh
-              </Typography>
-            </Box>
-
-            {/* Batarya Bilgisi */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-              <BatteryChargingFullIcon 
-                sx={{ 
-                  fontSize: '0.8rem',
-                  color: vehicleSettings.currentCharge > 20 
-                    ? theme.palette.success.main 
-                    : theme.palette.error.main 
-                }} 
-              />
-              <Typography 
-                variant="caption" 
-                sx={{ 
-                  fontSize: '0.6rem',
-                  color: vehicleSettings.currentCharge > 20 
-                    ? theme.palette.success.main 
-                    : theme.palette.error.main,
-                  fontWeight: 500
-                }}
-              >
-                {vehicleSettings.currentCharge}%
-                <Typography 
-                  component="span" 
-                  variant="caption" 
-                  sx={{ 
-                    fontSize: '0.55rem', 
-                    color: 'text.secondary',
-                    ml: 0.5 
-                  }}
-                >
-                  ({((vehicleSettings.batteryCapacity * vehicleSettings.currentCharge) / 100).toFixed(1)} kWh)
-                </Typography>
-              </Typography>
-            </Box>
+            >
+              <KeyboardArrowDownIcon fontSize="small" />
+            </IconButton>
           </Box>
         </Box>
 
-        {/* Kaydırılabilir içerik */}
-        <Box
-          sx={{
-            flex: 1,
-            overflowY: 'auto',
-            px: 2,
-            py: 1,
-            WebkitOverflowScrolling: 'touch',
-            '&::-webkit-scrollbar': { width: '8px' },
-            '&::-webkit-scrollbar-track': { background: 'transparent' },
-            '&::-webkit-scrollbar-thumb': {
-              background: theme.palette.mode === 'dark' 
-                ? 'rgba(255,255,255,0.2)' 
-                : 'rgba(0,0,0,0.2)',
-              borderRadius: '4px',
-            }
-          }}
-        >
-          {/* İstasyon kartları */}
-          {filteredNearbyStations.map(station => (
-            <Box
-              key={station.id}
-              sx={{
-                p: 1.5,
-                mb: 1,
-                borderRadius: 2,
-                bgcolor: theme.palette.mode === 'dark' ? 'rgba(24,28,33,0.8)' : 'rgba(255,255,255,0.9)',
-                backdropFilter: 'blur(8px)',
-                border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)'}`,
-                boxShadow: '0 2px 12px rgba(0,0,0,0.1)',
-                cursor: 'pointer',
-                transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-                '&:hover': {
-                  transform: 'translateY(-2px)',
-                  boxShadow: '0 4px 15px rgba(0,0,0,0.15)'
-                }
-              }}
-              onClick={(e) => handleOpenDetails(station, e)}
-            >
-              {/* İstasyon Başlığı */}
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1, alignItems: 'center' }}>
-                <Typography variant="subtitle1" sx={{ fontWeight: 600, fontSize: '0.9rem' }}>
-                  {station.name}
-                </Typography>
-                <StationStatusChip station={station} />
-              </Box>
-
-              {/* İstatistikler */}
-              <Box sx={{ 
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr 1fr 1fr',
-                gap: 1,
-                p: 1,
-                my: 1,
-                borderRadius: 1,
-                bgcolor: theme.palette.mode === 'dark' ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)',
-                border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'}`,
-              }}>
-                {/* Mesafe */}
-                <Box sx={{ textAlign: 'center' }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
-                    <DirectionsIcon sx={{ fontSize: '1rem', color: theme.palette.primary.main, mr: 0.5 }} />
-                    <Typography variant="caption" color="text.secondary">Mesafe</Typography>
+        <TableContainer sx={{ 
+          height: isMobile ? 'calc(60vh - 70px)' : 'calc(50vh - 70px)',
+          '&::-webkit-scrollbar': {
+            width: '8px',
+          },
+          '&::-webkit-scrollbar-track': {
+            backgroundColor: 'background.default',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            backgroundColor: 'primary.main',
+            borderRadius: '4px',
+          },
+        }}>
+          <Table stickyHeader size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell sx={{ 
+                  fontWeight: 600, 
+                  bgcolor: 'background.paper',
+                  borderBottom: 2,
+                  borderColor: 'primary.main'
+                }}>
+                  İstasyon Bilgileri
+                </TableCell>
+                <TableCell align="center" sx={{ 
+                  fontWeight: 600, 
+                  bgcolor: 'background.paper',
+                  borderBottom: 2,
+                  borderColor: 'primary.main'
+                }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
+                    <DirectionsIcon fontSize="small" />
+                    Mesafe/Süre
                   </Box>
-                  <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.primary.main }}>
-                    {calculateDistance(
-                      userLocation.lat,
-                      userLocation.lng,
-                      station.latitude,
-                      station.longitude
-                    ).toFixed(1)} km
-                  </Typography>
-                </Box>
-
-                {/* Varış Zamanı (Yeni) */}
-                <Box sx={{ textAlign: 'center', borderLeft: 1, borderColor: 'divider' }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
-                    <AccessTimeIcon sx={{ fontSize: '1rem', color: theme.palette.grey[500], mr: 0.5 }} />
-                    <Typography variant="caption" color="text.secondary">Varış</Typography>
+                </TableCell>
+                <TableCell align="center" sx={{ 
+                  fontWeight: 600, 
+                  bgcolor: 'background.paper',
+                  borderBottom: 2,
+                  borderColor: 'primary.main'
+                }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
+                    <BoltIcon fontSize="small" />
+                    Tüketim/Maliyet
                   </Box>
-                  <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.grey[600] }}>
-                    {calculateArrivalTime(
-                      calculateDistance(
-                        userLocation.lat,
-                        userLocation.lng,
-                        station.latitude,
-                        station.longitude
-                      )
-                    ).time}
-                    <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', fontSize: '0.7rem' }}>
-                      {calculateArrivalTime(
-                        calculateDistance(
-                          userLocation.lat,
-                          userLocation.lng,
-                          station.latitude,
-                          station.longitude
-                        )
-                      ).duration} dk
-                    </Typography>
-                  </Typography>
-                </Box>
-
-                {/* Tüketim */}
-                <Box sx={{ textAlign: 'center', borderLeft: 1, borderRight: 1, borderColor: 'divider' }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
-                    <ElectricBoltIcon sx={{ fontSize: '1rem', color: theme.palette.info.main, mr: 0.5 }} />
-                    <Typography variant="caption" color="text.secondary">Tüketim</Typography>
+                </TableCell>
+                <TableCell align="center" sx={{ 
+                  fontWeight: 600, 
+                  bgcolor: 'background.paper',
+                  borderBottom: 2,
+                  borderColor: 'primary.main'
+                }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
+                    <BatteryChargingFullIcon fontSize="small" />
+                    Şarj Bilgisi
                   </Box>
-                  <Typography variant="body2" sx={{ fontWeight: 600, color: theme.palette.info.main }}>
-                    {calculateEnergyConsumption(
-                      calculateDistance(
-                        userLocation.lat,
-                        userLocation.lng,
-                        station.latitude,
-                        station.longitude
-                      )
-                    ).toFixed(1)} kWh
-                    <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary', fontSize: '0.7rem' }}>
-                      ≈ {calculateEnergyCost(
-                        calculateEnergyConsumption(
-                          calculateDistance(
-                            userLocation.lat,
-                            userLocation.lng,
-                            station.latitude,
-                            station.longitude
-                          )
-                        )
-                      ).toFixed(0)} TL
-                    </Typography>
-                  </Typography>
-                </Box>
-
-                {/* Varış Şarjı */}
-                <Box sx={{ textAlign: 'center' }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 0.5 }}>
-                    <BatteryChargingFullIcon sx={{ 
-                      fontSize: '1rem', 
-                      color: calculateRemainingCharge(
-                        calculateEnergyConsumption(
-                          calculateDistance(
-                            userLocation.lat,
-                            userLocation.lng,
-                            station.latitude,
-                            station.longitude
-                          )
-                        )
-                      ) < 20 ? theme.palette.error.main : theme.palette.success.main,
-                      mr: 0.5 
-                    }} />
-                    <Typography variant="caption" color="text.secondary">Varış Şarjı</Typography>
-                  </Box>
-                  <Typography variant="body2" sx={{ 
-                    fontWeight: 600,
-                    color: calculateRemainingCharge(
-                      calculateEnergyConsumption(
-                        calculateDistance(
-                          userLocation.lat,
-                          userLocation.lng,
-                          station.latitude,
-                          station.longitude
-                        )
-                      )
-                    ) < 20 ? theme.palette.error.main : theme.palette.success.main
-                  }}>
-                    {Math.max(calculateRemainingCharge(
-                      calculateEnergyConsumption(
-                        calculateDistance(
-                          userLocation.lat,
-                          userLocation.lng,
-                          station.latitude,
-                          station.longitude
-                        )
-                      )
-                    ), 0).toFixed(1)}%
-                  </Typography>
-                </Box>
-              </Box>
-
-              {/* Alt Kısım - Butonlar */}
-              <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
-                <Button
-                  fullWidth
-                  variant="contained"
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    showRoute(station);
-                  }}
-                  startIcon={<DirectionsIcon sx={{ fontSize: '1rem' }} />}
-                  sx={{ py: 0.5, fontSize: '0.8rem' }}
-                >
-                  Rota
-                </Button>
-                <IconButton
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openInGoogleMaps(station);
-                  }}
+                </TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {filteredStations.map((station, index) => (
+                <TableRow
+                  key={station.id}
+                  hover
+                  onClick={() => handleStationSelect(station)}
+                  selected={selectedStation?.id === station.id}
                   sx={{ 
-                    color: '#4285F4',
-                    bgcolor: theme.palette.mode === 'dark' ? 'rgba(66,133,244,0.1)' : 'rgba(66,133,244,0.05)',
-                    '&:hover': {
-                      bgcolor: theme.palette.mode === 'dark' ? 'rgba(66,133,244,0.2)' : 'rgba(66,133,244,0.1)',
+                    cursor: 'pointer',
+                    '&:hover': { 
+                      bgcolor: 'action.hover',
+                      '& .show-route-button': {
+                        opacity: 1
+                      }
+                    },
+                    '&.Mui-selected': { 
+                      bgcolor: `${theme.palette.primary.main}15`,
+                      '& .show-route-button': {
+                        opacity: 1
+                      }
                     }
                   }}
                 >
-                  <GoogleIcon sx={{ fontSize: '1.2rem' }} />
-                </IconButton>
-              </Box>
-            </Box>
-          ))}
-        </Box>
+                  <TableCell sx={{ py: 1.5 }}>
+                    <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
+                      <Box sx={{ 
+                        width: 40,
+                        height: 40,
+                        borderRadius: '12px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        bgcolor: `${getStatusColor(station)}15`,
+                        color: getStatusColor(station),
+                        border: 1,
+                        borderColor: getStatusColor(station)
+                      }}>
+                        <EvStationIcon />
+                      </Box>
+                      <Box>
+                        <Typography variant="subtitle2" sx={{ 
+                          fontWeight: 600,
+                          color: 'text.primary',
+                          mb: 0.5
+                        }}>
+                          {station.name}
+                        </Typography>
+                        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+                          {station.available_dc > 0 && (
+                            <Chip
+                              size="small"
+                              icon={<BoltIcon sx={{ fontSize: '1rem !important' }} />}
+                              label={`${station.available_dc}/${station.connector_count} DC`}
+                              color="success"
+                              variant="outlined"
+                              sx={{ height: 24 }}
+                            />
+                          )}
+                          {/* DC Şarj olan cihaz sayısı */}
+                          {station.connector_count - station.available_dc > 0 && (
+                            <Chip
+                              size="small"
+                              icon={<ElectricCarIcon sx={{ fontSize: '1rem !important' }} />}
+                              label={`${station.connector_count - station.available_dc} DC Şarjda`}
+                              color="warning"
+                              variant="outlined"
+                              sx={{ 
+                                height: 24,
+                                animation: 'pulse 2s infinite'
+                              }}
+                            />
+                          )}
+                          {station.available_ac > 0 && (
+                            <Chip
+                              size="small"
+                              icon={<ElectricCarIcon sx={{ fontSize: '1rem !important' }} />}
+                              label={`${station.available_ac} AC`}
+                              color="info"
+                              variant="outlined"
+                              sx={{ height: 24 }}
+                            />
+                          )}
+                          {/* AC Şarj olan cihaz sayısı - eğer backend'den bu bilgi geliyorsa */}
+                          {station.total_ac > station.available_ac && (
+                            <Chip
+                              size="small"
+                              icon={<ElectricCarIcon sx={{ fontSize: '1rem !important' }} />}
+                              label={`${station.total_ac - station.available_ac} AC Şarjda`}
+                              color="warning"
+                              variant="outlined"
+                              sx={{ 
+                                height: 24,
+                                animation: 'pulse 2s infinite'
+                              }}
+                            />
+                          )}
+                        </Box>
+                      </Box>
+                    </Box>
+                  </TableCell>
+
+                  <TableCell>
+                    <Box sx={{ 
+                      display: 'flex', 
+                      flexDirection: 'column', 
+                      alignItems: 'center', 
+                      gap: 0.5 
+                    }}>
+                      <Typography variant="body2" sx={{ 
+                        fontWeight: 500,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.5
+                      }}>
+                        <DirectionsIcon sx={{ fontSize: 16, color: 'primary.main' }} />
+                        {station.routeDetails?.distance} km
+                      </Typography>
+                      <Typography variant="caption" sx={{ 
+                        color: 'text.secondary',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.5
+                      }}>
+                        <TimerIcon sx={{ fontSize: 14 }} />
+                        {station.routeDetails?.duration} dk
+                      </Typography>
+                    </Box>
+                  </TableCell>
+
+                  <TableCell>
+                    <Box sx={{ 
+                      display: 'flex', 
+                      flexDirection: 'column', 
+                      alignItems: 'center', 
+                      gap: 0.5 
+                    }}>
+                      <Typography variant="body2" sx={{ 
+                        fontWeight: 500,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.5
+                      }}>
+                        <BoltIcon sx={{ fontSize: 16, color: 'warning.main' }} />
+                        {station.routeDetails?.consumption} kWh
+                      </Typography>
+                      <Typography variant="caption" sx={{ 
+                        color: 'text.secondary',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.5
+                      }}>
+                        <LocalGasStationIcon sx={{ fontSize: 14 }} />
+                        {(station.routeDetails?.consumption * electricityPrice).toFixed(1)} ₺
+                      </Typography>
+                    </Box>
+                  </TableCell>
+
+                  <TableCell>
+                    <Box sx={{ 
+                      display: 'flex', 
+                      flexDirection: 'column', 
+                      alignItems: 'center', 
+                      gap: 0.5,
+                      position: 'relative'
+                    }}>
+                      <Typography variant="body2" sx={{ 
+                        fontWeight: 500,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.5,
+                        color: calculateChargeTime(station) > 1.33 ? 'error.main' : 'success.main'
+                      }}>
+                        <BatteryChargingFullIcon sx={{ 
+                          fontSize: 16, 
+                          color: 'inherit',
+                          transform: 'rotate(90deg)'
+                        }} />
+                        {calculateChargeTime(station)} saat
+                        {calculateChargeTime(station) > 1.33 && (
+                          <Tooltip title="Uzun şarj süresi">
+                            <Box component="span" sx={{ 
+                              display: 'inline-flex', 
+                              alignItems: 'center',
+                              color: 'error.main'
+                            }}>
+                              ⏰
+                            </Box>
+                          </Tooltip>
+                        )}
+                      </Typography>
+
+                      {(() => {
+                        const arrivalPercentage = batteryLevel - ((station.routeDetails?.consumption / batteryCapacity) * 100).toFixed(0);
+                        return (
+                          <Typography variant="caption" sx={{ 
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 0.5,
+                            fontWeight: 500,
+                            color: arrivalPercentage < 30 ? 'error.main' : 'success.main'
+                          }}>
+                            <PercentIcon sx={{ 
+                              fontSize: 14,
+                              color: 'inherit'
+                            }} />
+                            Varış: {arrivalPercentage}%
+                            {arrivalPercentage < 30 && (
+                              <Tooltip title="Düşük şarj seviyesi">
+                                <Box component="span" sx={{ 
+                                  display: 'inline-flex', 
+                                  alignItems: 'center',
+                                  color: 'error.main'
+                                }}>
+                                  ⚠️
+                                </Box>
+                              </Tooltip>
+                            )}
+                          </Typography>
+                        );
+                      })()}
+                      
+                      <IconButton 
+                        className="show-route-button"
+                        size="small"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          showRoute(station);
+                        }}
+                        sx={{ 
+                          position: 'absolute',
+                          right: -8,
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          opacity: 0,
+                          transition: 'opacity 0.2s',
+                          color: 'primary.main',
+                          bgcolor: 'background.paper',
+                          boxShadow: 1,
+                          '&:hover': {
+                            bgcolor: 'primary.main',
+                            color: 'white'
+                          }
+                        }}
+                      >
+                        <DirectionsIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
       </Paper>
+    </Collapse>
+  );
+
+  // Harita tıklama işleyicisi
+  const handleMapClick = useCallback((e) => {
+    // Marker'a tıklanmadıysa InfoWindow'u kapat
+    if (e.placeId === undefined) {
+      setSelectedStation(null);
+      setRouteCoordinates(null);
+    }
+  }, []);
+
+  // ESC tuşu ile InfoWindow'u kapatma
+  useEffect(() => {
+    const handleEscKey = (event) => {
+      if (event.key === 'Escape') {
+        setSelectedStation(null);
+        setRouteCoordinates(null);
+      }
+    };
+
+    document.addEventListener('keydown', handleEscKey);
+    return () => {
+      document.removeEventListener('keydown', handleEscKey);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleKeyPress = (event) => {
+      if (event.key === 't' && !event.target.matches('input, textarea')) {
+        event.preventDefault();
+        setShowTable(prev => !prev);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyPress);
+    return () => {
+      document.removeEventListener('keydown', handleKeyPress);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleSKey = (event) => {
+      if (event.key === 's' && !event.target.matches('input, textarea')) {
+        event.preventDefault();
+        setShowSettings(prev => !prev);
+      }
+    };
+
+    document.addEventListener('keydown', handleSKey);
+    return () => {
+      document.removeEventListener('keydown', handleSKey);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleSpaceKey = (event) => {
+      if (event.code === 'Space' && !event.target.matches('input, textarea')) {
+        event.preventDefault();
+        if (userLocation && window.google) {
+          const mapInstance = document.querySelector('div[class*="map"]')?.__gm?.map;
+          if (mapInstance) {
+            mapInstance.panTo(userLocation);
+            mapInstance.setZoom(15);
+          }
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleSpaceKey);
+    return () => {
+      document.removeEventListener('keydown', handleSpaceKey);
+    };
+  }, [userLocation]);
+
+  useEffect(() => {
+    const handleFKey = (event) => {
+      if (event.key === 'f' && !event.target.matches('input, textarea')) {
+        event.preventDefault();
+        setShowFilters(prev => !prev);
+      }
+    };
+
+    document.addEventListener('keydown', handleFKey);
+    return () => {
+      document.removeEventListener('keydown', handleFKey);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (userLocation && window.google && window.google.maps.geometry) {
+      // Eğer önceki konum varsa, yön hesaplayalım
+      if (prevLocation.current) {
+        try {
+          const heading = window.google.maps.geometry.spherical.computeHeading(
+            new window.google.maps.LatLng(prevLocation.current.lat, prevLocation.current.lng),
+            new window.google.maps.LatLng(userLocation.lat, userLocation.lng)
+          );
+          
+          // Sadece belirli bir mesafeden fazla hareket varsa rotasyonu güncelle
+          const distance = window.google.maps.geometry.spherical.computeDistanceBetween(
+            new window.google.maps.LatLng(prevLocation.current.lat, prevLocation.current.lng),
+            new window.google.maps.LatLng(userLocation.lat, userLocation.lng)
+          );
+          
+          if (distance > 1) { // 1 metre üzeri hareketlerde
+            prevRotation.current = heading;
+          }
+        } catch (error) {
+          console.error('Yön hesaplama hatası:', error);
+        }
+      }
+
+      // Mevcut konumu sakla
+      prevLocation.current = userLocation;
+    }
+  }, [userLocation]);
+
+  return (
+    <Box sx={{ height: '100vh', width: '100%', position: 'relative' }}>
+      <LoadScript 
+        googleMapsApiKey={GOOGLE_MAPS_API_KEY} 
+        libraries={libraries}
+        loadingElement={<div>Harita yükleniyor...</div>}
+      >
+        <GoogleMap
+          mapContainerStyle={mapContainerStyle}
+          center={userLocation || defaultCenter}
+          zoom={13}
+          options={mapOptions}
+          onLoad={(mapInstance) => {
+            setMap(mapInstance);
+            setIsMapReady(true);
+          }}
+          onClick={handleMapClick}
+        >
+          {isMapReady && (
+            <>
+              {userLocation && (
+                <Marker
+                  position={userLocation}
+                  icon={{
+                    url: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(`
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="40" height="40">
+                        <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-size="24" transform="rotate(${prevRotation.current}, 12, 12)">🚗</text>
+                      </svg>
+                    `),
+                    anchor: new window.google.maps.Point(20, 20),
+                    scaledSize: new window.google.maps.Size(40, 40)
+                  }}
+                />
+              )}
+
+              {filteredStations.map(station => (
+                <Marker
+                  key={station.id}
+                  position={{
+                    lat: station.latitude,
+                    lng: station.longitude
+                  }}
+                  icon={getMarkerIcon(station)}
+                  onClick={() => handleStationSelect(station)}
+                />
+              ))}
+
+              {selectedStation && (
+                <InfoWindow
+                  position={{
+                    lat: selectedStation.latitude,
+                    lng: selectedStation.longitude
+                  }}
+                  onCloseClick={() => {
+                    setSelectedStation(null);
+                    setRouteCoordinates(null);
+                  }}
+                  options={{
+                    pixelOffset: new window.google.maps.Size(0, -20),
+                    maxWidth: 320,
+                    disableAutoPan: false
+                  }}
+                >
+                  <StationInfo 
+                    station={selectedStation} 
+                    setSnackbar={setSnackbar}
+                    onClose={() => {
+                      setSelectedStation(null);
+                      setRouteCoordinates(null);
+                    }}
+                  />
+                </InfoWindow>
+              )}
+
+              {routeCoordinates && (
+                <Polyline
+                  path={routeCoordinates}
+                  options={{
+                    strokeColor: theme.palette.primary.main,
+                    strokeOpacity: 0.8,
+                    strokeWeight: 4,
+                  }}
+                />
+              )}
+            </>
+          )}
+        </GoogleMap>
+      </LoadScript>
+
+      <Box sx={{ position: 'fixed', top: 16, left: 16, zIndex: 1000 }}>
+        <Tooltip title="Araç Bilgileri">
+          <Fab
+            color="primary"
+            size="small"
+            onClick={() => setShowSettings(true)}
+            sx={{
+              boxShadow: 2,
+              '&:hover': {
+                boxShadow: 4
+              }
+            }}
+          >
+            <ElectricCarIcon />
+          </Fab>
+        </Tooltip>
+      </Box>
+
+      <Box sx={{ position: 'fixed', top: 16, right: 16, zIndex: 1000 }}>
+        <Fab
+          color="primary"
+          size="small"
+          onClick={() => setShowFilters(!showFilters)}
+          sx={{ mb: 1 }}
+        >
+          <FilterAltIcon />
+        </Fab>
+        <Fab
+          color="primary"
+          size="small"
+          onClick={() => {
+            if (userLocation && window.google) {
+              const mapInstance = document.querySelector('div[class*="map"]')?.__gm?.map;
+              if (mapInstance) {
+                mapInstance.panTo(userLocation);
+                mapInstance.setZoom(15);
+              }
+            }
+          }}
+        >
+          <MyLocationIcon />
+        </Fab>
+      </Box>
+
+      <VehicleSettingsDialog />
+
+      <StationsTable />
+
+      {!showTable && (
+      <Fab
+        color="primary"
+        size="small"
+          onClick={() => setShowTable(true)}
+          sx={{ position: 'fixed', bottom: 16, right: 16, zIndex: 1000 }}
+        >
+          <KeyboardArrowUpIcon />
+      </Fab>
+      )}
+
+      {isLoading.stations && (
+        <Box sx={{ 
+          position: 'fixed', 
+          top: '50%', 
+          left: '50%', 
+          transform: 'translate(-50%, -50%)',
+          zIndex: 1000 
+        }}>
+          <CircularProgress />
+      </Box>
+      )}
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={() => setSnackbar(prev => ({ ...prev, open: false }))}
+      >
+        <Alert severity={snackbar.severity}>
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
+
+      <Tooltip title="Klavye Kısayolları">
+        <Fab
+          color="secondary"
+          size="small"
+          sx={{
+            position: 'fixed', 
+            bottom: 16, 
+            left: 16, 
+            zIndex: 1000,
+            bgcolor: 'background.paper',
+            color: 'text.primary',
+            '&:hover': {
+              bgcolor: 'background.paper',
+              opacity: 0.9
+            }
+          }}
+          onClick={() => setSnackbar({
+            open: true,
+            message: 'ESC: İstasyon bilgilerini kapat | SPACE: Konumuma git | F: Filtreleri aç/kapat | S: Araç ayarları | T: Tabloyu aç/kapat',
+            severity: 'info'
+          })}
+        >
+          <Typography variant="button">?</Typography>
+        </Fab>
+      </Tooltip>
     </Box>
   );
 };
+
+const Map = () => (
+  <ErrorBoundary>
+    <MapComponent />
+  </ErrorBoundary>
+);
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('Map error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <div>Harita yüklenirken bir hata oluştu.</div>;
+    }
+    return this.props.children;
+  }
+}
 
 export default Map; 
