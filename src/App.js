@@ -24,7 +24,7 @@ function App() {
   const fetchStations = async () => {
     try {
       setLoading(true);
-      const response = await fetch('http://localhost:3001/api/stations');
+      const response = await fetch(`${process.env.REACT_APP_API_URL}/api/stations`);
       const result = await response.json();
       
       if (result.status === 'success') {

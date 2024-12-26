@@ -5,37 +5,18 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: charging-stations-frontend
-    restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
-    networks:
-      - charging-network
+    environment:
+      - REACT_APP_API_URL=/api
+      - REACT_APP_GOOGLE_MAPS_API_KEY=AIzaSyBH6USjQTfrtlroPqyNWxu7i5mcvtQRAOk
     volumes:
-      - nginx-logs:/var/log/nginx
-      # SSL sertifikaları için volume
-      - ./ssl:/etc/nginx/ssl
-      - ./certbot/conf:/etc/letsencrypt
-      - ./certbot/www:/var/www/certbot
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "https://localhost/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # Certbot servisi ekleyelim
-  certbot:
-    image: certbot/certbot
-    container_name: certbot
-    volumes:
-      - ./certbot/conf:/etc/letsencrypt
-      - ./certbot/www:/var/www/certbot
-    command: certonly --webroot -w /var/www/certbot --force-renewal --email your-email@domain.com -d your-domain.com --agree-tos
+      - ./ssl:/etc/nginx/ssl:ro
+    restart: unless-stopped
 
 networks:
   charging-network:
     driver: bridge
-
 volumes:
   nginx-logs:

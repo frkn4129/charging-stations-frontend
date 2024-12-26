@@ -56,7 +56,7 @@ import Slider from '@mui/material/Slider';
 import InputAdornment from '@mui/material/InputAdornment';
 import { getStationReviews, submitReview } from '../api/reviews';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080/api';
+const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 const libraries = ["places", "geometry"];
 const GOOGLE_MAPS_API_KEY = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
 
